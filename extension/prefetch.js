@@ -125,7 +125,7 @@
   }
 
   // ---- Clean feed (YouTube) ----
-  const clean = { on: false, hide: new Set() }; // set by the content script ('config')
+  const clean = { on: false, hide: new Set(), ads: false }; // set by the content script ('config')
   const waiting = new Map(); // request id -> resolve(decisions)
   let requestId = 0;
   let emptyStreak = 0;
@@ -137,6 +137,7 @@
     if (m.__picky === 'config') {
       clean.on = Boolean(m.clean);
       if (Array.isArray(m.hide)) clean.hide = new Set(m.hide.filter((k) => typeof k === 'string'));
+      clean.ads = Boolean(m.ads);
       if (!clean.on) resume();
     } else if (m.__picky === 'decisions') {
       waiting.get(m.id)?.(m);
@@ -198,6 +199,45 @@
     return removed;
   }
 
+  // Ads in the feed data (search, home, watch sidebar, masthead), when a rule is against every ad. The
+  // player's ads (playerAds, adPlacements) live in other responses and are never touched.
+  const AD = /^(adSlotRenderer|searchPyvRenderer|promotedSparklesWebRenderer|promotedVideoRenderer|compactPromotedVideoRenderer|displayAdRenderer|inFeedAdLayoutRenderer)$/;
+  const isAdEntry = (el) => {
+    if (!el || typeof el !== 'object' || Array.isArray(el)) return false;
+    if (Object.keys(el).some((k) => AD.test(k))) return true;
+    const content = el.richItemRenderer?.content || el.richSectionRenderer?.content;
+    if (content && Object.keys(content).some((k) => AD.test(k))) return true;
+    const box = Object.keys(el).find((k) => CONTAINER.test(k)); // a search section holding only ads
+    const items = box && (el[box].contents || el[box].items);
+    return Array.isArray(items) && items.length > 0 && items.every(isAdEntry);
+  };
+  function pruneAds(root) {
+    let count = 0;
+    const stack = [root];
+    let budget = 400000;
+    while (stack.length && budget-- > 0) {
+      const node = stack.pop();
+      if (!node || typeof node !== 'object') continue;
+      if (Array.isArray(node)) {
+        for (let i = node.length - 1; i >= 0; i--) {
+          if (isAdEntry(node[i])) {
+            node.splice(i, 1);
+            count++;
+          } else {
+            stack.push(node[i]);
+          }
+        }
+        continue;
+      }
+      if (isAdEntry(node.masthead)) {
+        delete node.masthead;
+        count++;
+      }
+      for (const k in node) if (node[k] && typeof node[k] === 'object' && !/^(playerAds|adPlacements|adSlots)$/.test(k)) stack.push(node[k]);
+    }
+    return count;
+  }
+
   function cleanCopy(res, json) {
     const headers = new Headers(res.headers);
     headers.delete('content-length');
@@ -221,15 +261,20 @@
       const json = parse(await res.clone().text());
       continuation = isContinuation(json);
       if (!continuation) emptyStreak = 0;
+      const ads = clean.ads ? pruneAds(json) : 0; // no question needed: these go whatever they promote
+      if (ads) send({ __picky: 'pruned-ads', count: ads });
       const found = find(json);
-      if (!found.length) return res;
+      if (!found.length) {
+        if (ads) outcome = 'pruned';
+        return ads ? cleanCopy(res, json) : res;
+      }
       const answer = await askDecisions(messages(found), Math.max(0, CLEAN_BUDGET_MS - (performance.now() - started)));
       if (!answer) {
         outcome = 'timeout';
-        return res;
+        return ads ? cleanCopy(res, json) : res;
       }
       const removed = prune(found, new Set(Array.isArray(answer.remove) ? answer.remove : []));
-      counts = { found: found.length, removed: removed.length };
+      counts = { found: found.length, removed: removed.length, ads };
       if (continuation) {
         emptyStreak = found.length - removed.length === 0 ? emptyStreak + 1 : 0;
         if (emptyStreak >= EMPTY_LIMIT && !paused) {
@@ -239,9 +284,9 @@
           send({ __picky: 'emptied', streak: emptyStreak }); // the content script may nudge YouTube to load on
         }
       }
-      if (!removed.length) return res;
+      if (!removed.length && !ads) return res;
       outcome = 'pruned';
-      send({ __picky: 'pruned', keys: removed });
+      if (removed.length) send({ __picky: 'pruned', keys: removed });
       return cleanCopy(res, json);
     } catch {
       outcome = 'error';
@@ -369,6 +414,8 @@
         try {
           if (seen || !data || typeof data !== 'object') return data;
           seen = true;
+          const ads = clean.on && clean.ads ? pruneAds(data) : 0;
+          if (ads) send({ __picky: 'pruned-ads', count: ads });
           const found = find(data);
           if (clean.on && clean.hide.size) {
             const removed = prune(found, clean.hide);

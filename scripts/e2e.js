@@ -110,7 +110,7 @@ const readState = (youtube) => {
     hidden: document.querySelectorAll('.picky-hidden').length,
     blurred: document.querySelectorAll('.picky-blurred').length,
     revealed: document.querySelectorAll('.picky-revealed').length,
-    staleKeys: youtube ? items.filter((el) => !el.dataset.pickyKey.endsWith(':' + ytKey(el))).length : 0,
+    staleKeys: youtube ? items.filter((el) => !el.dataset.pickyKey.startsWith('ad:') && !el.dataset.pickyKey.endsWith(':' + ytKey(el))).length : 0, // ads key by content
     // A hidden item's label must stay inside the item's own box (grids must not overflow).
     overflow: [...document.querySelectorAll('.picky-hidden')].filter((el) => {
       const card = [...el.children].find((c) => c.classList.contains('picky-label'))?.shadowRoot?.querySelector('.card');
@@ -254,7 +254,7 @@ record('generic-devto', devto.keyed > 0 && devto.pending === 0, { ...devto, reve
 // ---- 4. Instagram ----
 // Adapter output read in the main world (a second copy of adapters.js; the content script runs separately).
 // Passed as a string so it runs over CDP, which Instagram's CSP doesn't block.
-const adaptersSrc = fs.readFileSync(path.join(extDir, 'adapters.js'), 'utf8');
+const adaptersSrc = ['adapters.js', 'ads.js'].map((f) => fs.readFileSync(path.join(extDir, f), 'utf8')).join('\n');
 const adapterDump = (p) => p.evaluate(`(() => { ${adaptersSrc}
   const ig = globalThis.PickyAdapters.instagram;
   return ig.findItems().map((el) => ({ key: ig.key(el), shape: ig.shape(el), state: ig.extract(el)?.feed_item, image: ig.image(el)?.slice(0, 90) }));

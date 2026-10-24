@@ -37,6 +37,12 @@
   const cleanTimings = []; // { outcome, continuation, ms } per feed response Clean feed handled
   const adSlots = new WeakSet(); // tracked items that are ad slots (generic sites)
   const frameKeys = new WeakMap(); // ad slot -> content keys of the creatives its frames reported
+  const slotSince = new WeakMap(); // ad slot -> when Picky found it
+  const creativeSince = new WeakMap(); // ad slot -> when one of its frames started judging the creative
+  const framesJudging = new WeakMap(); // iframe -> when it said so (it may be before its slot is found)
+  const CREATIVE_WAIT = 1500; // ms an iframe ad waits for its frame's verdict before the page's own
+  const CREATIVE_JUDGING = 4000; // ...or, once a frame says it's judging (a picture takes longer), this
+  let prunedAds = 0; // Clean feed: ads YouTube never drew
 
   const alive = () => Boolean(chrome.runtime?.id);
   const watching = () => enabled && siteOn && rules.length > 0 && alive();
@@ -146,9 +152,12 @@
     fillLocal(key);
     const have = results.get(key) || {};
     const missing = askable(key).filter((t) => !(t in have));
-    if (!missing.length) return apply(el, key);
+    const waiting = awaitingCreative(el, key);
+    if (!missing.length && !waiting) return apply(el, key);
     if (blocked) return settle(el);
     if (!near.has(el)) return clear(el); // asked about when it nears the viewport; stays pre-hidden till then
+    if (waiting) setClass(el, 'picky-pending');
+    if (!missing.length) return; // the page's answers are ready as a fallback; the creative decides
     armTimeout(el, key);
 
     const state = adSlots.has(el) ? PickyAds.slotState(el) : adapter.extract(el);
@@ -160,8 +169,19 @@
     tokens.set(el, token);
     await ask(key, state, adSlots.has(el) ? PickyAds.image(el) : adapter.image(el), missing);
     if (tokens.get(el) !== token || el.dataset.pickyKey !== key) return; // node recycled meanwhile
-    if (hasAnswers(key)) apply(el, key);
-    else settle(el); // Jev failed: show the original
+    if (!hasAnswers(key)) settle(el); // Jev failed: show the original
+    else if (!awaitingCreative(el, key)) apply(el, key);
+  }
+
+  // The page sees almost nothing of an iframe ad, and a "what's this ad about" rule can't be answered
+  // from that. Such a slot waits (pending) for its frame's verdict, so it is never hidden on a guess and
+  // then shown again: CREATIVE_WAIT for a frame to start, CREATIVE_JUDGING once one has. Then the page's
+  // own answer. Rules about every ad need no wait.
+  function awaitingCreative(el, key) {
+    if (!adSlots.has(el) || !key.startsWith('ad:s:') || !askable(key).length || !slotSince.has(el)) return false;
+    const now = performance.now();
+    const judging = creativeSince.has(el) && now - creativeSince.get(el) < CREATIVE_JUDGING;
+    return (now - slotSince.get(el) < CREATIVE_WAIT || judging) && PickyAds.opaque(el);
   }
 
   const hasAnswers = (key) => Boolean(key) && rules.length > 0 && rulesFor(key).every((r) => r.text in (results.get(key) || {}));
@@ -276,7 +296,9 @@
     }
     if (!on) document.documentElement.removeAttribute('data-picky-paused');
     const hide = on ? [...results.keys()].filter((k) => k.startsWith('yt:') && hasAnswers(k) && decide(results.get(k)).state === 'hide') : [];
-    window.postMessage({ __picky: 'config', clean: cleanActive(), hide }, location.origin);
+    // With a rule against every ad, ads are taken out of the feed data too (never the player's ads).
+    const ads = on && rules.some((r) => r.scope === 'every_ad' && r.polarity === 'avoid');
+    window.postMessage({ __picky: 'config', clean: cleanActive(), hide, ads }, location.origin);
   }
 
   async function answerJudgeRequest({ id, items, budget }) {
@@ -394,6 +416,10 @@
     if (adapter !== PickyAdapters.youtube || !m || typeof m.__picky !== 'string') return;
     if (m.__picky === 'judge-request' && Array.isArray(m.items) && cleanActive()) answerJudgeRequest(m);
     else if (m.__picky === 'pruned' && Array.isArray(m.keys)) noteRemoved(m.keys.slice(0, 200));
+    else if (m.__picky === 'pruned-ads' && cleanActive()) {
+      prunedAds += Math.min(Number(m.count) || 0, 50);
+      reportStats();
+    }
     else if (m.__picky === 'paused' && cleanActive()) {
       document.documentElement.setAttribute('data-picky-paused', ''); // hides YouTube's spinner (content.css)
       showEndNote();
@@ -413,10 +439,24 @@
   // service worker's cache, so a frame can't make up its own verdict ----
   window.addEventListener('message', (e) => {
     const m = e.data;
-    if (m?.__picky !== 'ad-verdict' || e.source === window || typeof m.key !== 'string' || !PickyAds.KEY.test(m.key) || !adsOn()) return;
+    if (!/^ad-(verdict|judging)$/.test(m?.__picky) || e.source === window || typeof m.key !== 'string' || !PickyAds.KEY.test(m.key) || !adsOn()) return;
     const frame = [...document.querySelectorAll('iframe')].find((f) => f.contentWindow === e.source);
-    if (frame) onAdVerdict(frame, m.key);
+    if (!frame) return;
+    if (m.__picky === 'ad-verdict') onAdVerdict(frame, m.key);
+    else onAdJudging(frame);
   });
+
+  // A frame is judging its creative: an undecided slot keeps waiting for it (bounded).
+  function onAdJudging(frame) {
+    framesJudging.set(frame, performance.now());
+    const slot = [...tracked].find((t) => adSlots.has(t) && t.contains(frame));
+    if (slot) awaitJudging(slot, performance.now());
+  }
+  function awaitJudging(slot, since) {
+    if (slot.hasAttribute('data-picky-ready')) return; // decided already: no going back to pending
+    creativeSince.set(slot, since);
+    setTimeout(() => tracked.has(slot) && judge(slot), CREATIVE_JUDGING - (performance.now() - since) + 20);
+  }
 
   async function onAdVerdict(frame, key) {
     const texts = askable(key);
@@ -447,6 +487,10 @@
       untrack(t);
     }
     adSlots.add(slot);
+    slotSince.set(slot, performance.now());
+    setTimeout(() => tracked.has(slot) && judge(slot), CREATIVE_WAIT + 20); // no verdict by then: the page's own
+    const judging = Math.max(...[slot, ...slot.querySelectorAll('iframe')].map((f) => framesJudging.get(f) ?? -Infinity));
+    if (judging > -Infinity) awaitJudging(slot, judging);
     track(slot);
   }
 
@@ -477,7 +521,7 @@
       if (timings.length < 5000) timings.push({ pre: seen.pre, wait: performance.now() - seen.t });
     }
     const collapsible = d.state === 'hide' && cleanActive();
-    if (collapsible) noteCollapsed(el, key, d);
+    if (collapsible && !isAd(key)) noteCollapsed(el, key, d); // the panel lists videos; ads just fold
     else forgetCollapsed(key);
     if (d.state === 'show') {
       clear(el);
@@ -802,9 +846,14 @@
       if (d.state === 'show' && d.kind === 'want') bump(f.fitBy, d.rule);
       if (seenWithPicture.has(key)) f.withPicture++;
     }
+    if (prunedAds) { // ads Clean feed took out of the data: hidden by the rule against every ad
+      const rule = rules.find((r) => r.scope === 'every_ad' && r.polarity === 'avoid');
+      for (const k of ['judged', 'hidden', 'removed', 'hiddenAds']) f[k] += prunedAds;
+      if (rule) f.hiddenBy[rule.text] = (f.hiddenBy[rule.text] || 0) + prunedAds;
+    }
     const here = hiddenHere();
     return {
-      hidden: f.hidden, blurred: f.blurred, shown: f.shown, removed: f.removed, facts: f, page,
+      hidden: f.hidden, blurred: f.blurred, shown: f.shown, removed: f.removed, prunedAds, facts: f, page,
       site, siteOn, builtIn: Boolean(builtIn), adapter: adapter.name, active: active(), blocked, loginPage,
       cleanFeed, cleanAvailable: adapter === PickyAdapters.youtube,
       noTrace, hiddenHere: here.length, shownHere: here.filter((k) => revealed.has(k)).length,

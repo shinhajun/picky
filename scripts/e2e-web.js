@@ -1,8 +1,10 @@
 // Picky on any site, against live Jev, light and dark: generic pages (Hacker News table rows, lobste.rs),
 // ads on a news fixture (a cross-origin creative nested in a safeframe, AdSense and Amazon iframes, a
 // friendly GPT frame, an image-only creative, Taboola, a Sponsored card) with an "every ad" rule, a
-// topical ad rule and an "only these ads" rule, both hidden-item styles with the popup's undo, login
-// pages left alone, the per-site off switch, and a real ad-heavy site (optional: needs ads in headless).
+// topical ad rule and an "only these ads" rule (iframe ads never hidden and then shown again), YouTube's
+// and Instagram's native ads (fixtures, and live YouTube when headless gets ads), Clean feed taking ads
+// out of YouTube's data, both hidden-item styles with the popup's undo, login pages left alone, the
+// per-site off switch, and a real ad-heavy site (optional: needs ads in headless).
 // Usage: node scripts/e2e-web.js     Screenshots go to .e2e/web-*.png
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,6 +21,18 @@ if (!apiKey) throw new Error('TYPESAFE_API_KEY missing in .env');
 const fixture = (f) => fs.readFileSync(path.join(root, 'scripts', 'fixtures', f));
 
 const NEWS = 'https://news.picky-fixture.test/';
+const YT_ADS = 'https://www.youtube.com/results?search_query=picky+ads+fixture';
+const IG_ADS = 'https://www.instagram.com/';
+// The next page of YouTube results the fixture fetches: two videos between two ads.
+const YT_NEXT = JSON.stringify({ onResponseReceivedCommands: [{ appendContinuationItemsAction: { continuationItems: [
+  { itemSectionRenderer: { contents: [
+    { searchPyvRenderer: { ads: [{ adSlotRenderer: { adSlotMetadata: { slotType: 'SLOT_TYPE_IN_FEED' } } }] } },
+    { videoRenderer: { videoId: 'pkyAdsFix04', title: { runs: [{ text: 'Wiring a smart home on a budget' }] }, ownerText: { runs: [{ text: 'NetChuck' }] } } },
+    { adSlotRenderer: { adSlotMetadata: { slotType: 'SLOT_TYPE_IN_FEED' } } },
+    { videoRenderer: { videoId: 'pkyAdsFix05', title: { runs: [{ text: 'Sourdough for absolute beginners' }] }, ownerText: { runs: [{ text: 'Kitchen Notes' }] } } },
+  ] } },
+  { continuationItemRenderer: { continuationEndpoint: {} } },
+] } }] });
 const LOGIN = 'https://login.picky-fixture.test/';
 const CREATIVES = {
   casino: { w: 728, h: 90, headline: 'Spin to win: $500 welcome bonus', body: 'Play slots and live casino tonight. 18+ only.', image: 'casino', landing: 'https://www.jackpotcity.example/welcome' },
@@ -89,6 +103,16 @@ async function open(theme) {
     return route.fulfill({ contentType: 'text/html', body: creativeHtml(c) });
   });
 
+  // YouTube and Instagram ad fixtures; everything else on those sites goes through.
+  await context.route((url) => url.hostname === 'www.youtube.com' && url.searchParams.get('search_query') === 'picky ads fixture',
+    (route) => route.fulfill({ contentType: 'text/html', body: fixture('youtube-ads.html') }));
+  await context.route('https://www.youtube.com/youtubei/v1/search**', (route) => (/picky-fixture/.test(route.request().postData() || '')
+    ? route.fulfill({ contentType: 'application/json', body: YT_NEXT }) : route.continue()));
+  await context.route((url) => url.hostname === 'www.instagram.com', (route) => {
+    const image = new URL(route.request().url()).pathname.match(/^\/fixture\/(casino|laptop|coin|shoe)\.png$/)?.[1];
+    return route.fulfill(image ? { contentType: 'image/png', body: fixture(`ad-${image}.png`) } : { contentType: 'text/html', body: fixture('instagram-ads.html') });
+  });
+
   const sw = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
   const extId = new URL(sw.url()).host;
   sw.on('console', (m) => m.type() === 'error' && errors.push(`[${theme} sw] ${m.text()}`));
@@ -96,6 +120,12 @@ async function open(theme) {
   for (const p of context.pages()) if (p.url().startsWith('chrome-extension://')) await p.close();
   await sw.evaluate((k) => chrome.storage.local.set({ apiKey: k, enabled: true }), apiKey);
   const page = await context.newPage();
+  await page.addInitScript(slotSampler);
+  if (theme === 'dark') { // YouTube's dark theme is an attribute, not the colour scheme
+    await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
+      if (location.hostname.endsWith('youtube.com')) document.documentElement.setAttribute('dark', '');
+    }));
+  }
   const popup = await context.newPage();
   await popup.setViewportSize({ width: 360, height: 640 });
   await page.bringToFront();
@@ -124,6 +154,55 @@ async function open(theme) {
 }
 
 // ---- page state ----
+// Every animation frame, in the page: each ad item's state as the user sees it. An ad that was hidden
+// and is visible again in a later frame is a flicker.
+function slotSampler() {
+  const out = { flicker: [], seen: {} };
+  const last = new WeakMap();
+  const nameOf = (el) => el.querySelector('iframe')?.getAttribute('src')?.match(/c=([\w-]+)/)?.[1] || el.querySelector('iframe')?.id || el.dataset.pickyKey;
+  const tick = () => {
+    try {
+      for (const el of document.querySelectorAll('[data-picky-key^="ad:"]')) {
+        const now = el.matches('.picky-hidden, .picky-collapsed') ? 'gone' : el.matches('.picky-revealed') ? 'revealed'
+          : el.matches('.picky-pending') ? 'pending' : 'visible';
+        const before = last.get(el);
+        if (before === 'gone' && (now === 'visible' || now === 'pending')) out.flicker.push(`${nameOf(el)}: ${before} -> ${now}`);
+        last.set(el, now);
+        const seen = (out.seen[nameOf(el)] ||= []);
+        if (seen[seen.length - 1] !== now) seen.push(now);
+      }
+    } catch {}
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  window.__slots = out;
+}
+
+function readYtAds() {
+  const st = (el) => (!el?.dataset.pickyKey ? 'untracked' : ['hidden', 'collapsed', 'blurred', 'revealed', 'pending'].find((c) => el.classList.contains(`picky-${c}`)) || 'shown');
+  const casino = document.querySelector('ytd-search-pyv-renderer');
+  const vpn = [...document.querySelectorAll('ytd-ad-slot-renderer')].find((el) => !el.closest('ytd-search-pyv-renderer'));
+  const videos = [...document.querySelectorAll('ytd-video-renderer')];
+  return {
+    casino: st(casino), vpn: st(vpn), adKeys: [casino, vpn].map((el) => el?.dataset.pickyKey?.slice(0, 6)),
+    videos: videos.length, videosJudged: videos.filter((v) => v.dataset.pickyKey).length,
+    videosHidden: videos.filter((v) => v.matches('.picky-hidden, .picky-collapsed, .picky-blurred')).length,
+    label: casino?.querySelector('.picky-label')?.shadowRoot?.querySelector('.card')?.textContent.replace(/\s+/g, ' ').trim().slice(0, 60) || '',
+    response: window.__fixtureResponse || null,
+  };
+}
+
+function readIgAds() {
+  const st = (el) => (!el?.dataset.pickyKey ? 'untracked' : ['hidden', 'collapsed', 'blurred', 'revealed', 'pending'].find((c) => el.classList.contains(`picky-${c}`)) || 'shown');
+  const post = (user) => [...document.querySelectorAll('article')].find((a) => a.textContent.includes(user));
+  const reel = (user) => [...document.querySelectorAll('.reel')].find((r) => r.textContent.includes(user));
+  return {
+    posts: { cat: st(post('catlover.daily')), casinoAd: st(post('spinpalace.official')), shoeAd: st(post('strideworks')), bakes: st(post('weekend.bakes')) },
+    reels: { cat: st(reel('catlover.daily')), coinAd: st(reel('coinrocket.app')), bakes: st(reel('weekend.bakes')) },
+    adKeys: [...document.querySelectorAll('[data-picky-key^="ad:ig:"]')].length,
+  };
+}
+
 function readGeneric() {
   const st = (el) => ['hidden', 'collapsed', 'blurred', 'revealed', 'pending'].find((c) => el.classList.contains(`picky-${c}`)) || 'shown';
   const items = [...document.querySelectorAll('[data-picky-key]')].filter((el) => el.dataset.pickyKey);
@@ -222,12 +301,13 @@ for (const theme of ['light', 'dark']) {
   await setRules([['No gambling or crypto ads', 'avoid', 'some_ads']]);
   await page.goto(NEWS, { waitUntil: 'domcontentloaded' });
   const topical = await settle(page, readAds, { min: 6000 });
+  const topicalFrames = await page.evaluate(() => window.__slots);
   await page.evaluate(() => window.scrollTo(0, 0));
   await shot('ads-topical-card');
   record(`${theme}:ads-topical-card`,
     allOf(topical.slots, 'hidden', ['casino', 'casinoImg', 'crypto']) && allOf(topical.slots, 'shown', ['tech', 'shoes'])
-      && topical.storiesHidden === 0 && topical.bitcoinStory === 'shown' && topical.labelsInSlots,
-    topical);
+      && topical.storiesHidden === 0 && topical.bitcoinStory === 'shown' && topical.labelsInSlots && topicalFrames.flicker.length === 0,
+    { ...topical, flicker: topicalFrames.flicker });
 
   // ---- 4. Leave no trace: the same ads fold away; the popup brings them back ----
   await set({ hiddenStyle: 'none' });
@@ -258,10 +338,52 @@ for (const theme of ['light', 'dark']) {
   await setRules([['only tech ads', 'want', 'some_ads']]);
   await page.goto(NEWS, { waitUntil: 'domcontentloaded' });
   const want = await settle(page, readAds, { min: 6000 });
+  const wantFrames = await page.evaluate(() => window.__slots);
   await shot('ads-only-tech');
   // A crypto exchange is borderline "tech" for Jev: blurred (unsure) is as fine as hidden.
   record(`${theme}:ads-only-tech`, want.slots.tech === 'shown' && allOf(want.slots, 'hidden', ['casino', 'casinoImg', 'shoes'])
     && ['hidden', 'blurred'].includes(want.slots.crypto) && want.storiesHidden === 0, want);
+  // Iframe ads wait (pending) for their creative instead of hiding on a guess: never hidden, then shown.
+  record(`${theme}:ads-no-flicker`, wantFrames.flicker.length === 0 && !wantFrames.seen.tech?.includes('gone') && wantFrames.seen.tech?.at(-1) === 'visible',
+    { flicker: wantFrames.flicker, frames: wantFrames.seen });
+
+  // ---- 5b. YouTube's own ads (fixture shaped like live search results) ----
+  await setRules([['No ads at all', 'avoid', 'every_ad']]);
+  await page.goto(YT_ADS, { waitUntil: 'domcontentloaded' });
+  const ytAll = await settle(page, readYtAds, { min: 3000 });
+  await shot('yt-ads-every');
+  record(`${theme}:youtube-ads-every-ad`, ytAll.casino === 'hidden' && ytAll.vpn === 'hidden' && ytAll.adKeys.every((k) => k === 'ad:yt:')
+    && ytAll.videosJudged === ytAll.videos && ytAll.videosHidden === 0 && /Picky hid this ad/.test(ytAll.label), ytAll);
+  await setRules([['No gambling or crypto ads', 'avoid', 'some_ads']]);
+  await page.goto(YT_ADS, { waitUntil: 'domcontentloaded' });
+  const ytTopical = await settle(page, readYtAds, { min: 3000 });
+  await shot('yt-ads-topical');
+  record(`${theme}:youtube-ads-topical`, ytTopical.casino === 'hidden' && ytTopical.vpn === 'shown' && ytTopical.videosHidden === 0, ytTopical);
+  // Clean feed with a rule against every ad: ads are taken out of YouTube's data, and the ones already
+  // drawn fold away.
+  await setRules([['No ads at all', 'avoid', 'every_ad']]);
+  await set({ cleanFeed: true });
+  await page.goto(YT_ADS, { waitUntil: 'domcontentloaded' });
+  const ytClean = await settle(page, readYtAds, { min: 3000 });
+  const ytCleanStats = await sw.evaluate(async (id) => chrome.tabs.sendMessage(id, { type: 'getStats' }), await tabId());
+  await shot('yt-ads-clean');
+  await set({ cleanFeed: false });
+  record(`${theme}:youtube-clean-feed-ads`, ytClean.response?.adSlots === 0 && ytClean.response?.pyv === 0 && ytClean.response?.videos === 2
+    && ytClean.casino === 'collapsed' && ytClean.vpn === 'collapsed' && ytCleanStats.prunedAds >= 2 && ytCleanStats.facts.hiddenAds >= 4,
+  { response: ytClean.response, casino: ytClean.casino, vpn: ytClean.vpn, prunedAds: ytCleanStats.prunedAds, hiddenAds: ytCleanStats.facts.hiddenAds });
+
+  // ---- 5c. Instagram's "Sponsored" posts and reels (fixture: the feed needs a login) ----
+  await page.goto(IG_ADS, { waitUntil: 'domcontentloaded' });
+  const igAll = await settle(page, readIgAds, { min: 3000 });
+  await shot('ig-ads-every');
+  record(`${theme}:instagram-ads-every-ad`, igAll.posts.casinoAd === 'hidden' && igAll.posts.shoeAd === 'hidden' && igAll.reels.coinAd === 'hidden'
+    && igAll.posts.cat === 'shown' && igAll.posts.bakes === 'shown' && igAll.reels.cat === 'shown' && igAll.reels.bakes === 'shown' && igAll.adKeys === 3, igAll);
+  await setRules([['No gambling or crypto ads', 'avoid', 'some_ads']]);
+  await page.goto(IG_ADS, { waitUntil: 'domcontentloaded' });
+  const igTopical = await settle(page, readIgAds, { min: 3000 });
+  await shot('ig-ads-topical');
+  record(`${theme}:instagram-ads-topical`, igTopical.posts.casinoAd === 'hidden' && igTopical.reels.coinAd === 'hidden' && igTopical.posts.shoeAd === 'shown'
+    && igTopical.posts.cat === 'shown' && igTopical.posts.bakes === 'shown', igTopical);
 
   // ---- 6. A page with a password field is never read or sent ----
   await setRules([['no politics', 'avoid', 'content']]);
@@ -324,6 +446,28 @@ for (const theme of ['light', 'dark']) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await shot('real-weather');
     record('light:real-ad-site', real.hidden > 0 && real.unhiddenGpt === 0, real, { optional: true });
+
+    // Live YouTube search ads, when headless gets any (they come and go).
+    const live = { query: null, ads: 0 };
+    for (const q of ['best vpn', 'vpn', 'web hosting', 'antivirus', 'best vpn']) {
+      await page.goto(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`, { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(5000);
+      live.ads = await page.evaluate(() => document.querySelectorAll('ytd-search-pyv-renderer, ytd-ad-slot-renderer').length);
+      if (live.ads) {
+        live.query = q;
+        break;
+      }
+    }
+    if (live.ads) {
+      await page.waitForTimeout(2500);
+      Object.assign(live, await page.evaluate(() => {
+        const outer = [...document.querySelectorAll('ytd-search-pyv-renderer, ytd-ad-slot-renderer')].filter((el) => !el.parentElement.closest('ytd-search-pyv-renderer, ytd-ad-slot-renderer'));
+        return { outer: outer.length, hidden: outer.filter((el) => el.matches('.picky-hidden') && el.dataset.pickyKey?.startsWith('ad:yt:')).length,
+          sample: outer[0]?.dataset.pickyKey ? outer[0].textContent.replace(/\s+/g, ' ').trim().slice(0, 80) : '' };
+      }));
+      await shot('yt-live-ads');
+    }
+    record('light:youtube-live-ads', live.ads > 0 && live.hidden === live.outer, live, { optional: true });
   }
 
   const swErrors = await sw.evaluate(() => self.__pickyErrors || []);

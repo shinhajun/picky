@@ -4,13 +4,14 @@
 (() => {
   if (window === top || !PickyAds.isAdFrame()) return;
 
-  const report = (key) => parent.postMessage({ __picky: 'ad-verdict', key }, '*');
+  // 'ad-judging' first (the page then waits for the verdict), then 'ad-verdict'.
+  const report = (key, type = 'ad-verdict') => parent.postMessage({ __picky: type, key }, '*');
 
   // Ad frames nested in this one report through it.
   window.addEventListener('message', (e) => {
     const m = e.data;
-    if (m?.__picky !== 'ad-verdict' || typeof m.key !== 'string' || !e.source || e.source === window) return;
-    if (e.source.parent === window) report(m.key);
+    if (!/^ad-(verdict|judging)$/.test(m?.__picky) || typeof m.key !== 'string' || !e.source || e.source === window) return;
+    if (e.source.parent === window) report(m.key, m.__picky);
   });
 
   let lastKey = null;
@@ -27,6 +28,7 @@
     lastKey = item.key;
     asked++;
     if (!gate.rules.length) return report(item.key); // only "every ad" rules: being an ad is enough
+    report(item.key, 'ad-judging');
     const res = await chrome.runtime.sendMessage({ type: 'judge', key: item.key, state: item.state, rules: gate.rules, image: item.image }).catch(() => null);
     if (res?.probs && gate.rules.every((t) => t in res.probs)) report(item.key);
   }

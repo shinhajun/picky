@@ -13,15 +13,17 @@
   ].join(',');
   const LABEL = /^(advertisements?|advertising|ads?|sponsored( content| links?| posts?)?|promoted|paid (content|post)|story continues below advertisement|continue reading below|광고|anzeige|werbung|publicité|publicidad|pubblicità|реклама|広告)$/i;
   // Ad-network boilerplate inside creatives, not what the ad is about.
-  const BOILERPLATE = /\b(adchoices|ads by google|why this ad\??|report this ad|stop seeing this ad|advertisement|sponsored)\b/gi;
+  const BOILERPLATE = /\b(adchoices|ads by google|why this ad\??|report this ad|stop seeing this ad|my ad center|visit site|advertisement|sponsored)\b/gi;
   const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'LINK', 'META']);
 
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  // Text that doesn't change when Picky hides the slot (innerText would) and skips scripts and our labels.
+  // Text that doesn't change when Picky hides the slot (innerText would). Skips scripts, our labels, and
+  // the site's own "Advertisement" / "Story continues below advertisement" lines.
   function textOf(root) {
     let out = '';
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => (n.parentElement?.closest('script, style, noscript, template, .picky-label') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+      acceptNode: (n) => (n.parentElement?.closest('script, style, noscript, template, .picky-label') || (n.data.length <= 40 && LABEL.test(n.data.trim()))
+        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
     });
     for (let n = walker.nextNode(); n && out.length < 2000; n = walker.nextNode()) out += ` ${n.data}`;
     return clean(out.replace(BOILERPLATE, ' '));
@@ -71,9 +73,24 @@
     for (const a of root.querySelectorAll('a[href]')) {
       if (/adchoices|privacy|opt.?out|why this ad/i.test(a.textContent + a.getAttribute('href'))) continue;
       const host = landingHost(a.getAttribute('href'));
-      if (host && host !== location.hostname.replace(/^www\./, '')) counts.set(host, (counts.get(host) || 0) + 1);
+      if (host && host !== location.hostname.replace(/^www\./, '') && !/(^|\.)(instagram|facebook|youtube)\.com$/.test(host)) counts.set(host, (counts.get(host) || 0) + 1);
     }
-    return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] || shownDomain(root);
+  }
+  // Ads whose links only go through the platform's click tracker still print where they lead.
+  function shownDomain(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const m = n.data.trim().match(/^(?:https?:\/\/)?((?:[\w-]+\.)+[a-z]{2,})(?:\/\S*)?$/i);
+      if (m && !/\.(jpg|png|gif|webp)$/i.test(m[1])) return m[1].toLowerCase().replace(/^www\./, '');
+    }
+    return '';
+  }
+  // Labelled as an ad by the site itself ("Sponsored", "광고"…), anywhere inside.
+  function hasAdLabel(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.data.length <= 40 && LABEL.test(n.data.trim())) return true;
+    return false;
   }
 
   function alts(root) {
@@ -220,5 +237,15 @@
 
   const slotKey = (slot) => `ad:s:${hash(JSON.stringify(slotState(slot).feed_item))}`;
 
-  globalThis.PickyAds = { isAdFrame, creative, findSlots, slotOf, slotState, slotKey, image: biggestImage, KEY: /^ad:[\w:]{1,40}$/ };
+  // An iframe ad of which the page sees nothing but the frame: its creative decides.
+  function opaque(slot) {
+    const f = slotState(slot).feed_item;
+    return !f.text && !f.image_descriptions && !f.advertiser_domain && Boolean(slot.matches('iframe') || slot.querySelector('iframe'));
+  }
+
+  globalThis.PickyAds = {
+    isAdFrame, creative, findSlots, slotOf, slotState, slotKey, opaque, image: biggestImage, KEY: /^ad:[\w:]{1,40}$/,
+    // For the YouTube and Instagram adapters' own ad items.
+    text: textOf, domain: landingDomain, hasAdLabel, hash,
+  };
 })();

@@ -29,25 +29,35 @@ const YT_ITEMS = [
   'ytm-shorts-lockup-view-model-v2',
   'ytm-shorts-lockup-view-model',
 ].join(',');
+// Native ads in the home feed, search results and watch sidebar, and the home masthead. Never the
+// player's own ads (pre-roll, overlays, the companion banner beside the player).
+const YT_ADS = 'ytd-ad-slot-renderer, ytd-search-pyv-renderer, ytd-promoted-sparkles-web-renderer, ytd-promoted-video-renderer, ytd-compact-promoted-video-renderer, ytd-display-ad-renderer, ytd-in-feed-ad-layout-renderer, #masthead-ad';
+const YT_ALL = `${YT_ITEMS}, ${YT_ADS}`;
+const PLAYER = 'ytd-player, #movie_player, #player-ads';
+const ytAd = (el) => el.matches(YT_ADS) || Boolean(el.querySelector(YT_ADS));
 
 const youtube = {
   name: 'YouTube',
   site: 'youtube.com',
-  itemSelector: YT_ITEMS,
+  itemSelector: YT_ALL,
 
-  // Outermost matches only: home wraps yt-lockup-view-model inside ytd-rich-item-renderer.
+  // Outermost matches only: home wraps yt-lockup-view-model (or an ad slot) inside ytd-rich-item-renderer.
   findItems() {
-    return [...document.querySelectorAll(YT_ITEMS)].filter((el) => !el.parentElement?.closest(YT_ITEMS));
+    return [...document.querySelectorAll(YT_ALL)].filter((el) => !el.parentElement?.closest(YT_ALL) && !el.closest(PLAYER));
   },
 
   itemOf(node) {
-    let el = (node.nodeType === 1 ? node : node.parentElement)?.closest(YT_ITEMS);
+    let el = (node.nodeType === 1 ? node : node.parentElement)?.closest(YT_ALL);
     let up;
-    while (el && (up = el.parentElement?.closest(YT_ITEMS))) el = up;
-    return el || null;
+    while (el && (up = el.parentElement?.closest(YT_ALL))) el = up;
+    return el && !el.closest(PLAYER) ? el : null;
   },
 
   key(el) {
+    if (ytAd(el)) { // an ad's key is what it says (its links are click trackers)
+      const text = PickyAds.text(el);
+      return text ? `ad:yt:${PickyAds.hash(`${text}|${PickyAds.domain(el)}`)}` : null;
+    }
     for (const a of el.querySelectorAll('a[href]')) {
       const href = a.getAttribute('href');
       let m = href.match(/[?&]v=([\w-]{6,})/);
@@ -61,6 +71,14 @@ const youtube = {
   },
 
   extract(el) {
+    if (ytAd(el)) {
+      const text = PickyAds.text(el).slice(0, 400);
+      if ((text.match(/[\p{L}\p{N}]/gu) || []).length < 3) return null; // not filled in yet
+      const state = { platform: 'YouTube', kind: 'advertisement', text };
+      const domain = PickyAds.domain(el);
+      if (domain) state.advertiser_domain = domain;
+      return { feed_item: state };
+    }
     const title =
       firstText(el, '#video-title, h3') ||
       clean(el.querySelector('a[title]')?.getAttribute('title')) ||
@@ -78,6 +96,7 @@ const youtube = {
   },
 
   image(el) {
+    if (ytAd(el)) return PickyAds.image(el);
     const id = this.key(el)?.match(/^yt:[vs]:(.+)$/)?.[1];
     if (id) return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`; // 480x360, exists for every video
     return el.querySelector('img[src*="ytimg.com"]')?.src || null;
@@ -96,7 +115,16 @@ const youtube = {
 
 // ---- generic: no class names, only semantics (article/role) and repeated sibling structure ----
 
-const CHROME = 'nav, header, footer, aside, form, dialog, menu, [role="navigation"], [role="banner"], [role="contentinfo"], [role="menu"], [role="menubar"], [role="tablist"], [role="dialog"], [contenteditable=""], [contenteditable="true"]';
+const CHROME = 'nav, header, footer, aside, form, dialog, menu, [role="navigation"], [role="banner"], [role="contentinfo"], [role="complementary"], [role="menu"], [role="menubar"], [role="tablist"], [role="dialog"], [contenteditable=""], [contenteditable="true"]';
+// A sidebar that isn't an <aside>: a narrow column named like one ("discovery-layout__sidebar"), not a
+// state class on a wrapper ("has-sidebar").
+const SIDEBAR = /^(?!(has|with|no|show|is|hide|toggle|open)[-_])(?:.*[-_])?sidebar$/i;
+function inSidebar(el) {
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    if ([...p.classList].some((c) => SIDEBAR.test(c)) && p.getBoundingClientRect().width < innerWidth * 0.4) return true;
+  }
+  return false;
+}
 const CONTAINERS = 'ul, ol, div, section, main, tbody, [role="list"], [role="feed"], [role="grid"]';
 
 function realLinks(el) {
@@ -119,7 +147,7 @@ function looksLikeItem(el, maxText) {
   if (el.classList.contains('picky-label') || el.closest(CHROME)) return false;
   const len = el.textContent.trim().length;
   if (len < 15 || len > maxText) return false;
-  if (!realLinks(el).length || navLike(el)) return false;
+  if (!realLinks(el).length || navLike(el) || inSidebar(el)) return false;
   const r = el.getBoundingClientRect();
   const minHeight = el.tagName === 'TR' ? 14 : 24; // table rows are dense (Hacker News: 19 px)
   return r.width >= 120 && r.height >= minHeight && r.height < innerHeight * 2.5; // taller: the page itself, not an item
@@ -263,7 +291,7 @@ function igUser(el) {
 }
 
 // The caption is the longest piece of text that isn't a button, timestamp or feed chrome.
-const IG_CHROME_TEXT = /^(liked by|view all|add a comment|see translation|original audio|\d[\d,.]*\s*(likes?|comments?|views?)\b)/i;
+const IG_CHROME_TEXT = /^(liked by|view all|add a comment|see translation|original audio|sponsored|\d[\d,.]*\s*(likes?|comments?|views?)\b)/i;
 function igCaption(el) {
   let best = '';
   for (const n of el.querySelectorAll('h1, span[dir="auto"], div[dir="auto"]')) {
@@ -286,6 +314,18 @@ function pickSrc(img, want = 640) {
   return url ? new URL(url, location.href).href : null;
 }
 
+function igKey(el) {
+  const links = el.matches(IG_POST_LINK) ? [el] : el.querySelectorAll(IG_POST_LINK);
+  for (const a of links) {
+    const code = igCode(a.getAttribute('href'));
+    if (code) return `ig:${code}`;
+  }
+  // Reels in the viewer may carry no post link; fall back to who posted what.
+  // textContent, not innerText: a hidden item's text must still give the same key.
+  const text = clean(el.textContent).slice(0, 160);
+  return text.length >= 10 ? `ig:t:${text}` : null;
+}
+
 const instagram = {
   name: 'Instagram',
   site: 'instagram.com',
@@ -293,7 +333,7 @@ const instagram = {
   findItems() {
     const items = new Set();
     for (const post of document.querySelectorAll('article')) {
-      if (post.querySelector(IG_POST_LINK)) items.add(post);
+      if (post.querySelector(IG_POST_LINK) || PickyAds.hasAdLabel(post)) items.add(post); // ads may have no permalink
     }
     for (const a of document.querySelectorAll(IG_POST_LINK)) {
       if (!a.closest('article') && a.querySelector('img') && igCode(a.getAttribute('href'))) items.add(a);
@@ -306,15 +346,8 @@ const instagram = {
   },
 
   key(el) {
-    const links = el.matches(IG_POST_LINK) ? [el] : el.querySelectorAll(IG_POST_LINK);
-    for (const a of links) {
-      const code = igCode(a.getAttribute('href'));
-      if (code) return `ig:${code}`;
-    }
-    // Reels in the viewer may carry no post link; fall back to who posted what.
-    // textContent, not innerText: a hidden item's text must still give the same key.
-    const text = clean(el.textContent).slice(0, 160);
-    return text.length >= 10 ? `ig:t:${text}` : null;
+    const key = igKey(el);
+    return key && PickyAds.hasAdLabel(el) ? `ad:ig:${PickyAds.hash(key)}` : key; // "Sponsored" posts and reels
   },
 
   extract(el) {
@@ -327,6 +360,11 @@ const instagram = {
     if (!caption && !alts.length) return null;
     const href = (el.matches(IG_POST_LINK) ? el : el.querySelector(IG_POST_LINK))?.getAttribute('href') || '';
     const state = { platform: 'Instagram', kind: /\/reels?\//.test(href) || el.querySelector('video') ? 'reel' : 'post' };
+    if (PickyAds.hasAdLabel(el)) {
+      state.kind = 'advertisement';
+      const domain = PickyAds.domain(el);
+      if (domain) state.advertiser_domain = domain;
+    }
     if (username) state.username = username;
     if (caption) state.caption = caption.slice(0, 500);
     if (tags.length) state.hashtags = tags;

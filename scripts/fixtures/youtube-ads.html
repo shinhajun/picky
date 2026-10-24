@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>picky ads fixture - YouTube</title>
+<!-- YouTube search results with native ads, shaped like the live page (headless only sometimes gets
+     them): a search "pyv" ad wrapping an ad slot, and a bare ad slot, between ordinary videos. After load
+     it fetches a youtubei search response that also carries ads, for Clean feed's data pruning.
+     Served by scripts/e2e-web.js at https://www.youtube.com/results?search_query=picky+ads+fixture. -->
+<style>
+  body { margin: 0; font: 14px Roboto, Arial, sans-serif; background: #fff; color: #0f0f0f; }
+  html[dark] body { background: #0f0f0f; color: #f1f1f1; }
+  ytd-section-list-renderer { display: block; max-width: 1100px; margin: 24px auto; }
+  ytd-item-section-renderer, #contents { display: block; }
+  ytd-video-renderer, ytd-search-pyv-renderer, ytd-ad-slot-renderer { display: block; margin-bottom: 16px; }
+  .row { display: flex; gap: 16px; }
+  .thumb { flex: none; width: 360px; height: 202px; border-radius: 12px; background: linear-gradient(135deg, #9db4d6, #3d5a80); }
+  img.thumb { object-fit: cover; background: #222; }
+  #video-title, .headline { display: block; font-size: 18px; font-weight: 500; color: inherit; text-decoration: none; margin: 4px 0 6px; }
+  .meta { color: #606060; font-size: 12px; }
+  html[dark] .meta { color: #aaa; }
+  .badge { font-weight: 600; }
+  .cta { display: inline-block; margin-top: 10px; padding: 8px 14px; border-radius: 18px; background: #065fd4; color: #fff; text-decoration: none; }
+</style>
+</head>
+<body>
+<ytd-section-list-renderer><div id="contents">
+<ytd-item-section-renderer><div id="contents">
+
+  <ytd-search-pyv-renderer>
+    <ytd-ad-slot-renderer><ytd-in-feed-ad-layout-renderer>
+      <div class="row">
+        <a href="https://www.google.com/aclk?sa=L&amp;ai=casino"><img class="thumb" alt="" src="https://tpc.googlesyndication.com/simgad/casino.png"></a>
+        <div>
+          <a class="headline" href="https://www.google.com/aclk?sa=L&amp;ai=casino">Spin Palace: 200 free spins on your first deposit</a>
+          <div class="meta">Play 500+ slots, roulette and live blackjack tonight. 18+ only. Gamble responsibly.</div>
+          <div class="meta"><span class="badge">Sponsored</span> · <span>https://www.spinpalace.example/welcome</span></div>
+          <a class="cta" href="https://www.google.com/aclk?sa=L&amp;ai=casino">Visit site</a>
+        </div>
+      </div>
+    </ytd-in-feed-ad-layout-renderer></ytd-ad-slot-renderer>
+  </ytd-search-pyv-renderer>
+
+  <ytd-video-renderer><div class="row"><a href="/watch?v=pkyAdsFix01"><div class="thumb"></div></a><div>
+    <a id="video-title" href="/watch?v=pkyAdsFix01">How to set up a home network the right way</a>
+    <div class="meta"><a href="/@NetChuck">NetChuck</a> · 1.2M views · 2 weeks ago</div></div></div></ytd-video-renderer>
+
+  <ytd-video-renderer><div class="row"><a href="/watch?v=pkyAdsFix02"><div class="thumb"></div></a><div>
+    <a id="video-title" href="/watch?v=pkyAdsFix02">Bitcoin crashes 12%: what happened this week</a>
+    <div class="meta"><a href="/@MoneyDaily">Money Daily</a> · 340K views · 1 day ago</div></div></div></ytd-video-renderer>
+
+  <ytd-ad-slot-renderer><ytd-in-feed-ad-layout-renderer>
+    <div class="row">
+      <a href="https://www.google.com/aclk?sa=L&amp;ai=vpn"><img class="thumb" alt="" src="https://tpc.googlesyndication.com/simgad/laptop.png"></a>
+      <div>
+        <a class="headline" href="https://www.google.com/aclk?sa=L&amp;ai=vpn">The fastest VPN of 2026 - tested on 40 laptops</a>
+        <div class="meta">Stay private on public Wi-Fi. Works on Mac, Windows, iPhone and Android.</div>
+        <div class="meta"><span class="badge">Sponsored</span> · <span>https://www.privacyguide.example/best-vpn</span></div>
+        <a class="cta" href="https://www.google.com/aclk?sa=L&amp;ai=vpn">Visit site</a>
+      </div>
+    </div>
+  </ytd-in-feed-ad-layout-renderer></ytd-ad-slot-renderer>
+
+  <ytd-video-renderer><div class="row"><a href="/watch?v=pkyAdsFix03"><div class="thumb"></div></a><div>
+    <a id="video-title" href="/watch?v=pkyAdsFix03">Ten-minute garlic butter pasta</a>
+    <div class="meta"><a href="/@KitchenNotes">Kitchen Notes</a> · 88K views · 3 days ago</div></div></div></ytd-video-renderer>
+
+</div></ytd-item-section-renderer>
+</div></ytd-section-list-renderer>
+
+<script>
+  // The next page of results, as YouTube's own script would fetch it; Picky's page script may edit it.
+  addEventListener('load', () => setTimeout(async () => {
+    try {
+      const res = await fetch('/youtubei/v1/search?prettyPrint=false', { method: 'POST', body: '{"continuation":"picky-fixture"}' });
+      const text = await res.text();
+      window.__fixtureResponse = { adSlots: (text.match(/"adSlotRenderer"/g) || []).length, pyv: (text.match(/"searchPyvRenderer"/g) || []).length, videos: (text.match(/"videoRenderer"/g) || []).length };
+    } catch (err) {
+      window.__fixtureResponse = { error: String(err) };
+    }
+  }, 1500));
+</script>
+</body>
+</html>
