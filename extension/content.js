@@ -12,6 +12,9 @@
 
   let enabled = false;
   let siteOn = false;
+  let hasKey = false;
+  let prejudge = true; // judge from the site's feed data before items are drawn; storage `prejudge: false` turns it off
+  let settingsLoaded = false;
   let rules = []; // [{ id, text, polarity: 'want' | 'avoid' | null }]
   let blocked = null; // 'no-key' | 'bad-key': stop asking until settings change
   const tracked = new Set(); // item elements we manage
@@ -22,6 +25,10 @@
   const revealed = new Set(); // content keys the user chose to see anyway
   const tokens = new WeakMap(); // item -> latest judge() call, to drop stale answers
   const labels = new WeakMap(); // item -> label host
+  const timers = new WeakMap(); // item -> content key its pre-hide timeout is armed for
+  const appeared = new WeakMap(); // item -> { t, key, pre, done }, for timings
+  const timings = []; // { pre, wait } per item: decided before it appeared? ms from appearing to decided
+  let late = 0; // items let through by the timeout before Jev answered
 
   const alive = () => Boolean(chrome.runtime?.id);
   const active = () => enabled && siteOn && rules.length > 0 && alive();
@@ -29,13 +36,16 @@
 
   // ---- settings ----
   function loadSettings() {
-    chrome.storage.local.get(['enabled', 'rules', 'sites']).then((s) => {
+    chrome.storage.local.get(['enabled', 'rules', 'sites', 'apiKey', 'prejudge']).then((s) => {
       const before = rules.map((r) => `${r.text}:${r.polarity}`).join('\n');
       enabled = s.enabled !== false;
       siteOn = s.sites?.[site] ?? Boolean(builtIn);
+      hasKey = Boolean(s.apiKey?.trim());
+      prejudge = s.prejudge !== false;
       rules = (s.rules || []).filter((r) => r.text?.trim()).map((r) => ({ ...r, text: r.text.trim() }));
       blocked = null;
       if (rules.map((r) => `${r.text}:${r.polarity}`).join('\n') !== before) redecide();
+      updatePrehide();
       if (active()) {
         observe();
         scan();
@@ -43,12 +53,39 @@
         unobserve();
       }
       for (const el of tracked) judge(el);
+      if (!settingsLoaded) {
+        settingsLoaded = true;
+        early.splice(0).forEach(prejudgeItem);
+      }
       reportStats();
     });
   }
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && (changes.enabled || changes.rules || changes.sites || changes.apiKey)) loadSettings();
+    if (area === 'local' && (changes.enabled || changes.rules || changes.sites || changes.apiKey || changes.prejudge)) loadSettings();
   });
+
+  // Until judged, items wait invisible with their layout kept (content.css), so the original never
+  // flashes. Only while Picky can judge here; each item gets through after 3 s if Jev hasn't answered.
+  function updatePrehide() {
+    const on = Boolean(builtIn) && prejudge && active() && hasKey && !blocked;
+    document.documentElement.toggleAttribute('data-picky-prehide', on);
+  }
+  function markReady(el, isLate = false) {
+    if (isLate && !el.hasAttribute('data-picky-ready')) late++;
+    el.setAttribute('data-picky-ready', isLate ? 'late' : '');
+  }
+  function armTimeout(el, key) {
+    if (timers.get(el) === key) return;
+    timers.set(el, key);
+    setTimeout(() => {
+      if (timers.get(el) === key) timers.delete(el);
+      if (el.dataset.pickyKey === key && !el.hasAttribute('data-picky-ready')) markReady(el, true);
+    }, 3000);
+  }
+  const settle = (el) => {
+    clear(el);
+    markReady(el);
+  };
 
   // Rules changed: keep the tallies for items whose answers we already have.
   function redecide() {
@@ -61,14 +98,20 @@
 
   // ---- judging ----
   async function judge(el) {
-    const key = adapter.key(el);
-    el.dataset.pickyKey = key || '';
-    if (!active() || !key) return clear(el);
+    const key = adapter.key(el) || '';
+    if (key !== el.dataset.pickyKey) { // a new item, or a recycled node now showing something else
+      el.dataset.pickyKey = key;
+      el.removeAttribute('data-picky-ready');
+      appeared.set(el, { t: appearAt ?? performance.now(), key, pre: hasAnswers(key), done: false });
+    }
+    if (!active() || !key) return settle(el);
 
     const have = results.get(key) || {};
     const missing = rules.map((r) => r.text).filter((t) => !(t in have));
     if (!missing.length) return apply(el, key);
-    if (!near.has(el) || blocked) return clear(el);
+    if (blocked) return settle(el);
+    if (!near.has(el)) return clear(el); // asked about when it nears the viewport; stays pre-hidden till then
+    armTimeout(el, key);
 
     const state = adapter.extract(el);
     el.dataset.pickyWaiting = state ? '' : '1'; // title not rendered yet; a mutation will retry
@@ -77,19 +120,84 @@
 
     const token = {};
     tokens.set(el, token);
-    let res;
-    try {
-      res = await chrome.runtime.sendMessage({ type: 'judge', key, state, rules: missing, image: adapter.image(el) });
-    } catch {
-      return clear(el); // extension reloaded underneath us
-    }
-    if (res?.probs) results.set(key, { ...(results.get(key) || {}), ...res.probs });
-    if (res?.vision) seenWithPicture.add(key);
-    if (res?.error === 'no-key' || res?.error === 'bad-key') blocked = res.error;
+    await ask(key, state, adapter.image(el), missing);
     if (tokens.get(el) !== token || el.dataset.pickyKey !== key) return; // node recycled meanwhile
     const now = results.get(key) || {};
     if (rules.every((r) => r.text in now)) apply(el, key);
-    else clear(el);
+    else settle(el); // Jev failed: show the original
+  }
+
+  const hasAnswers = (key) => Boolean(key) && rules.length > 0 && rules.every((r) => r.text in (results.get(key) || {}));
+
+  // One request per item and rule set at a time, whether it came from the page or the feed data.
+  const asking = new Map(); // content key -> { rules: Set, promise }
+  function ask(key, state, image, missing) {
+    const current = asking.get(key);
+    if (current && missing.every((t) => current.rules.has(t))) return current.promise;
+    const promise = chrome.runtime.sendMessage({ type: 'judge', key, state, rules: missing, image })
+      .then((res) => {
+        if (res?.probs) results.set(key, { ...(results.get(key) || {}), ...res.probs });
+        if (res?.vision) seenWithPicture.add(key);
+        if (res?.error === 'no-key' || res?.error === 'bad-key') {
+          blocked = res.error;
+          updatePrehide();
+        }
+      })
+      .catch(() => {}) // extension reloaded underneath us
+      .finally(() => {
+        if (asking.get(key)?.promise === promise) asking.delete(key);
+      });
+    asking.set(key, { rules: new Set(missing), promise });
+    return promise;
+  }
+
+  // ---- items from the site's feed data (prefetch.js, in the page's world), judged before they're drawn ----
+  const early = []; // arrived before settings loaded
+  let prefetched = 0;
+  const PREFETCH_LIMIT = 600; // per page load: caps what a page could make Picky spend
+  const ITEM_KEY = /^(yt:[vs]:[\w-]{11}|ig:[\w-]{5,40})$/;
+  window.addEventListener('message', (e) => {
+    if (!builtIn || e.source !== window || e.data?.__picky !== 'feed' || !Array.isArray(e.data.items)) return;
+    for (const item of e.data.items.slice(0, 200)) {
+      if (settingsLoaded) prejudgeItem(item);
+      else if (early.length < 400) early.push(item);
+    }
+  });
+
+  function prejudgeItem(item) {
+    if (!prejudge || !active() || blocked || prefetched >= PREFETCH_LIMIT) return;
+    const key = typeof item?.key === 'string' && ITEM_KEY.test(item.key) ? item.key : null;
+    const state = cleanState(item?.state);
+    if (!key || !state || hasAnswers(key)) return;
+    prefetched++;
+    const missing = rules.map((r) => r.text).filter((t) => !(t in (results.get(key) || {})));
+    ask(key, state, imageFor(key, item.image), missing).then(() => {
+      for (const el of tracked) if (el.dataset.pickyKey === key) judge(el); // already on the page: apply now
+    });
+  }
+
+  // The page world is untrusted: keep only known text fields, and pictures only from the sites' own CDNs.
+  function cleanState(raw) {
+    const f = raw?.feed_item;
+    if (!f || typeof f !== 'object') return null;
+    const out = {};
+    for (const k of ['platform', 'kind', 'title', 'channel', 'username', 'caption']) {
+      if (typeof f[k] === 'string' && f[k]) out[k] = f[k].slice(0, 500);
+    }
+    for (const k of ['hashtags', 'image_descriptions']) {
+      if (Array.isArray(f[k])) out[k] = f[k].filter((x) => typeof x === 'string').slice(0, 10).map((x) => x.slice(0, 300));
+    }
+    return out.title || out.caption || out.image_descriptions?.length ? { feed_item: out } : null;
+  }
+  function imageFor(key, url) {
+    const id = key.match(/^yt:[vs]:(.+)$/)?.[1];
+    if (id) return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+    try {
+      const u = new URL(url);
+      return u.protocol === 'https:' && /(\.cdninstagram\.com|\.fbcdn\.net)$/.test(u.hostname) ? u.href : null;
+    } catch {
+      return null;
+    }
   }
 
   function decide(probs) {
@@ -112,6 +220,12 @@
     const d = decide(results.get(key));
     if (decisive()) decisions.set(key, d);
     reportStats();
+    markReady(el);
+    const seen = appeared.get(el);
+    if (seen && !seen.done && seen.key === key) {
+      seen.done = true;
+      if (timings.length < 5000) timings.push({ pre: seen.pre, wait: performance.now() - seen.t });
+    }
     if (d.state === 'show') return clear(el);
     const state = revealed.has(key) ? 'revealed' : d.state === 'hide' ? 'hidden' : 'blurred';
     // Tiles keep their height when hidden so grids stay aligned.
@@ -261,13 +375,21 @@
     mo.disconnect();
   }
 
+  // When the items now being handled entered the page: the mutation batch that added them.
+  let appearAt = null;
+  let addedAt = null;
+
   function scan() {
     if (!active()) return;
+    appearAt = addedAt ?? performance.now();
+    addedAt = null;
     for (const el of adapter.findItems()) {
       if (tracked.has(el)) continue;
       tracked.add(el);
       io.observe(el);
+      judge(el); // answers already cached (often from the feed data) apply before the next paint
     }
+    appearAt = null;
     for (const el of tracked) {
       if (el.isConnected) continue;
       tracked.delete(el);
@@ -276,13 +398,27 @@
     }
   }
 
-  let scanTimer = null;
-  function scanSoon() {
-    scanTimer ??= setTimeout(() => {
-      scanTimer = null;
-      scan();
-    }, adapter === PickyAdapters.youtube ? 200 : 700);
+  // YouTube and Instagram: next frame (their selectors are cheap). Other sites: at most every 700 ms.
+  // The timer backs up requestAnimationFrame, which doesn't run in background tabs.
+  function soon(fn, slowMs) {
+    let queued = false;
+    return () => {
+      if (queued) return;
+      queued = true;
+      const run = () => {
+        if (!queued) return;
+        queued = false;
+        fn();
+      };
+      if (builtIn) {
+        requestAnimationFrame(run);
+        setTimeout(run, 250);
+      } else {
+        setTimeout(run, slowMs);
+      }
+    };
   }
+  const scanSoon = soon(scan, 700);
 
   function trackedItemOf(node) {
     if (adapter.itemOf) return adapter.itemOf(node);
@@ -294,22 +430,30 @@
 
   // Node contents change under us (recycling, lazy titles): re-judge when the content key changes.
   const dirty = new Set();
-  let flushTimer = null;
+  let dirtyAt = null;
   const mo = new MutationObserver((records) => {
     if (!alive()) return teardown();
     if (!active()) return;
+    const now = performance.now();
     let added = false;
     for (const r of records) {
       if (r.type === 'childList' && r.addedNodes.length) added = true;
       const item = trackedItemOf(r.target);
       if (item) dirty.add(item);
     }
-    if (added) scanSoon();
-    flushTimer ??= setTimeout(flush, 60);
+    if (added) {
+      addedAt ??= now;
+      scanSoon();
+    }
+    if (dirty.size) {
+      dirtyAt ??= now;
+      flushSoon();
+    }
   });
 
   function flush() {
-    flushTimer = null;
+    appearAt = dirtyAt ?? performance.now();
+    dirtyAt = null;
     for (const el of dirty) {
       if (!tracked.has(el)) continue;
       const key = adapter.key(el) || '';
@@ -323,11 +467,14 @@
       }
     }
     dirty.clear();
+    appearAt = null;
   }
+  const flushSoon = soon(flush, 60);
 
   function teardown() {
     unobserve();
     io.disconnect();
+    document.documentElement.removeAttribute('data-picky-prehide');
     for (const el of tracked) clear(el);
   }
 
@@ -356,6 +503,8 @@
   }
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'getStats') sendResponse(stats());
+    // How early items were judged (scripts/e2e.js): decided before they appeared, and ms to decide.
+    if (msg.type === 'getTimings') sendResponse({ timings, late, prefetched, prehide: document.documentElement.hasAttribute('data-picky-prehide') });
   });
 
   loadSettings();

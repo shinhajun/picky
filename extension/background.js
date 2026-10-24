@@ -2,7 +2,9 @@
 import { imageAsset } from './image.js';
 import { callJev, polarityQuestion, ruleKey, ruleQuestion } from './jev.js';
 
-const MAX_CONCURRENT = 6;
+// A page's feed data arrives in bursts of 20-50 items. Jev answered 30 parallel single-item requests in
+// ~300 ms, so a high limit is what lets items be judged before they are drawn (429s are retried).
+const MAX_CONCURRENT = 20;
 const CACHE_LIMIT = 5000;
 // Same band content.js blurs. A text answer in it, or an item with almost no text, gets a second
 // look with its picture.

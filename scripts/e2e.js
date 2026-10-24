@@ -117,6 +117,7 @@ const readState = (youtube) => {
       return card && card.getBoundingClientRect().width > el.getBoundingClientRect().width + 1;
     }).length,
     keys: items.map((el) => el.dataset.pickyKey),
+    prehide: document.documentElement.hasAttribute('data-picky-prehide'),
     labels: [...document.querySelectorAll('.picky-hidden, .picky-blurred')].slice(0, 3).map(label),
   };
 };
@@ -174,6 +175,8 @@ await page.bringToFront();
 const withKey = await settle(page, true);
 record('popup-key-entry', formShown && noKey.hidden + noKey.blurred === 0 && keySaved && withKey.hidden + withKey.blurred > 0,
   { formShown, judgedBeforeKey: noKey.hidden + noKey.blurred, keySaved, judgedAfterKey: withKey.hidden + withKey.blurred });
+// Pre-hide (items invisible until judged) must never apply without a key.
+record('prehide-needs-key', !noKey.prehide && withKey.prehide, { prehideWithoutKey: noKey.prehide, prehideWithKey: withKey.prehide });
 
 // ---- 1. YouTube regression (on by default) ----
 for (const sc of YOUTUBE) {
@@ -208,6 +211,13 @@ record('usage-matches-jev', ytUsage.tokens > 0 && ytUsage.tokens === net.tokens 
 const afterYt = await swStatus();
 record('image-path-youtube', (afterYt.images?.ok || 0) > 0, { images: afterYt.images });
 
+// ---- 2b. Turning YouTube off removes pre-hide and judging ----
+await setSites({ 'youtube.com': false });
+await page.goto('https://www.youtube.com/results?search_query=news+today', { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(3500);
+const ytOff = await page.evaluate(readState, true);
+record('site-off-no-prehide', !ytOff.prehide && ytOff.keyed === 0, { prehide: ytOff.prehide, keyed: ytOff.keyed });
+
 // ---- 3. Per-site opt-in on a generic site ----
 await setRules(['No posts about C, C++ or Rust']);
 await setSites({});
@@ -228,8 +238,8 @@ await page.screenshot({ path: path.join(outDir, 'generic-lobsters.png') });
 await popup.reload();
 await popup.waitForTimeout(600);
 await popup.screenshot({ path: path.join(outDir, 'popup-picked.png'), fullPage: true });
-record('opt-in-toggle', before.keyed === 0 && pickVisible && sitesNow?.['lobste.rs'] === true && after.keyed > 0 && after.pending === 0,
-  { keyedBeforePick: before.keyed, keyedAfterPick: after.keyed, hidden: after.hidden, blurred: after.blurred, sites: sitesNow });
+record('opt-in-toggle', before.keyed === 0 && pickVisible && sitesNow?.['lobste.rs'] === true && after.keyed > 0 && after.pending === 0 && !after.prehide,
+  { keyedBeforePick: before.keyed, keyedAfterPick: after.keyed, hidden: after.hidden, blurred: after.blurred, sites: sitesNow, prehide: after.prehide });
 
 await setRules(['No AI or LLM posts']);
 await setSites({ 'lobste.rs': true, 'dev.to': true });
@@ -255,6 +265,12 @@ await page.goto('https://www.instagram.com/natgeo/', { waitUntil: 'domcontentloa
 const igLive = await settle(page, false, 6);
 await page.screenshot({ path: path.join(outDir, 'instagram-profile-grid.png') });
 const igLiveDump = await adapterDump(page);
+// The profile's posts are embedded in the first HTML: prefetch.js should have sent them for judging early.
+const igTimings = await sw.evaluate((id) => chrome.tabs.sendMessage(id, { type: 'getTimings' }), await tabIdOf(page));
+record('instagram-prefetch', igTimings.prefetched > 0 && igTimings.prehide, {
+  prefetched: igTimings.prefetched, decided: igTimings.timings.length,
+  decidedBeforeNode: igTimings.timings.filter((x) => x.pre).length, late: igTimings.late,
+});
 record('instagram-live-grid', igLive.keyed > 0 && igLive.pending === 0 && igLive.overflow === 0 && igLive.keys.every((k) => /^ig:[\w-]+$/.test(k)),
   { ...igLive, sample: igLiveDump.slice(0, 2) });
 

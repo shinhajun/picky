@@ -15,3 +15,12 @@
   position: absolute !important; inset: 0; z-index: 10; padding: 12px;
 }
 .picky-revealed > .picky-label { display: block !important; position: absolute !important; top: 8px; left: 8px; z-index: 10; }
+
+/* Judged before shown: on YouTube and Instagram, an item Picky hasn't decided yet waits invisible, layout
+   kept. content.js sets data-picky-prehide on <html> only while it can judge this site, and marks each
+   item data-picky-ready once decided (or after 3 s). Outermost items only: nested ones would stay hidden. */
+html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) > :not(.picky-label),
+html[data-picky-prehide] article:has(a[href*="/p/"], a[href*="/reel/"]):not([data-picky-ready]) > :not(.picky-label),
+html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(article *):not([data-picky-ready]) > :not(.picky-label) {
+  visibility: hidden !important;
+}
