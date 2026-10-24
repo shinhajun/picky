@@ -116,6 +116,50 @@ const pill = await page.evaluate(() => document.querySelector('.picky-clean-ui')
 record('removed-never-in-dom', t.removed.length > 0 && leaked.length === 0 && /Picky removed \d+ video/.test(pill || ''),
   { removed: t.removed.length, leakedIntoDom: leaked.length, pill });
 
+// 2b. The first page (no waiting possible there): hidden videos fold away instead of leaving tombstones,
+//     go into the removed list, and the panel's Show unfolds one in place.
+await page.goto('https://www.youtube.com/results?search_query=senate+election+news', { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(6000);
+const firstPage = await page.evaluate(() => ({
+  tombstones: document.querySelectorAll('.picky-hidden').length,
+  folded: document.querySelectorAll('.picky-collapsed').length,
+  pill: document.querySelector('.picky-clean-ui')?.shadowRoot?.querySelector('.pill:not([hidden])')?.textContent || '',
+  // Shelves still on screen with nothing visible inside (a header and "Show more" with no videos).
+  emptyShelves: [...document.querySelectorAll('grid-shelf-view-model, ytd-reel-shelf-renderer, ytd-shelf-renderer')]
+    .filter((sh) => sh.offsetHeight > 0 && ![...sh.querySelectorAll('ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model, ytd-video-renderer, ytd-reel-item-renderer')].some((i) => i.offsetHeight > 0)).length,
+}));
+await page.screenshot({ path: path.join(outDir, 'clean-first-page-light.png') });
+await page.evaluate(() => document.querySelector('.picky-clean-ui').shadowRoot.querySelector('.pill').click());
+await page.waitForTimeout(300);
+const unfold = await page.evaluate(async () => {
+  const button = document.querySelector('.picky-clean-ui').shadowRoot.querySelector('.toggle');
+  if (!button) return { button: false };
+  button.click();
+  await new Promise((r) => setTimeout(r, 400));
+  const el = document.querySelector('.picky-revealed');
+  return { button: true, unfolded: Boolean(el && el.offsetHeight > 0), label: button.textContent };
+});
+await page.evaluate(() => document.querySelector('.picky-clean-ui').shadowRoot.querySelector('.close').click());
+record('first-page-folds-away', firstPage.tombstones === 0 && firstPage.emptyShelves === 0 && firstPage.folded > 0 && /removed \d+/.test(firstPage.pill) && unfold.unfolded,
+  { ...firstPage, ...unfold });
+
+// 2c. A grid closes up around folded items: every row but the last is full.
+await page.goto('https://www.youtube.com/@CNN/videos', { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(6000);
+const grid = await page.evaluate(() => {
+  const items = [...document.querySelectorAll('ytd-rich-item-renderer')].filter((el) => el.offsetHeight > 0);
+  const rows = new Map();
+  for (const el of items) {
+    const top = Math.round(el.getBoundingClientRect().top + scrollY);
+    rows.set(top, (rows.get(top) || 0) + 1);
+  }
+  const counts = [...rows.keys()].sort((a, b) => a - b).map((k) => rows.get(k));
+  const perRow = Number(document.querySelector('ytd-rich-item-renderer')?.getAttribute('items-per-row')) || 3;
+  return { visible: items.length, folded: document.querySelectorAll('ytd-rich-item-renderer.picky-collapsed').length, tombstones: document.querySelectorAll('.picky-hidden').length, rowCounts: counts.join(','), perRow, gridRows: document.querySelectorAll('ytd-rich-grid-row').length };
+});
+const rowCounts = grid.rowCounts ? grid.rowCounts.split(',').map(Number) : [];
+record('grid-closes-up', grid.folded > 0 && grid.tombstones === 0 && rowCounts.slice(0, -1).every((n) => n === grid.perRow), grid);
+
 // 3. Infinite scroll keeps loading with Clean feed on (rule that removes only some videos).
 await L.setRules(['No crypto hype'], 'avoid');
 await L.spaSearch('stock market today', 4000);
@@ -169,14 +213,19 @@ const capText = await L.noteText();
 const atPause = L.feedRequests.browse;
 await page.waitForTimeout(6000);
 const whilePaused = L.feedRequests.browse - atPause;
+// While paused, only Picky's note shows: YouTube's loading spinner is hidden.
+const spinnerWhilePaused = await page.evaluate(() => [...document.querySelectorAll('ytd-continuation-item-renderer')]
+  .some((el) => getComputedStyle(el).visibility !== 'hidden' && el.getClientRects().length));
 await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
 await page.waitForTimeout(500);
 await page.screenshot({ path: path.join(outDir, 'clean-end-note-light.png') });
 await page.evaluate(() => document.querySelector('.picky-end-note')?.shadowRoot.querySelector('.more').click());
 await page.waitForTimeout(6000);
 const afterMore = L.feedRequests.browse - atPause;
+const pausedAfterMore = await page.evaluate(() => document.documentElement.hasAttribute('data-picky-paused'));
 record('want-mode-cap', Boolean(capText?.includes('Nothing that fits 고양이 영상만')) && atPause - browseStart <= 4 && whilePaused === 0 && afterMore >= 1,
   { note: capText, requestsBeforePause: atPause - browseStart, requestsWhilePaused: whilePaused, requestsAfterKeepLooking: afterMore });
+record('paused-hides-spinner', !spinnerWhilePaused, { spinnerVisibleWhilePaused: spinnerWhilePaused, stillPausedRightAfterKeepLooking: pausedAfterMore });
 
 // 7. Switching it off: the next responses pass through untouched and hiding works as before.
 await L.setRules(['정치 얘기 싫어'], 'avoid');
@@ -204,6 +253,9 @@ fs.rmSync(L.userDataDir, { recursive: true, force: true });
 const D = await open('dark');
 await D.sw.evaluate(() => chrome.storage.local.set({ cleanFeed: true }));
 await D.setRules(['정치 얘기 싫어'], 'avoid');
+await D.page.goto('https://www.youtube.com/results?search_query=senate+election+news', { waitUntil: 'domcontentloaded' });
+await D.page.waitForTimeout(6000);
+await D.page.screenshot({ path: path.join(outDir, 'clean-first-page-dark.png') });
 await D.page.goto('https://www.youtube.com/results?search_query=weather', { waitUntil: 'domcontentloaded' });
 await D.page.waitForTimeout(3000);
 for (const q of ['election news', 'congress hearing', 'world news today']) {

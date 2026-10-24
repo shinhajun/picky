@@ -8,7 +8,7 @@
   const page = Math.random().toString(36).slice(2); // this page load, for Feed Facts
   const HIDE_AT = 0.65; // "avoid" at or above, or best "want" below BLUR_AT -> hide
   const BLUR_AT = 0.35; // in between -> blur, never hide
-  const STATES = ['picky-pending', 'picky-hidden', 'picky-blurred', 'picky-revealed', 'picky-anchor'];
+  const STATES = ['picky-pending', 'picky-hidden', 'picky-blurred', 'picky-revealed', 'picky-anchor', 'picky-collapsed'];
 
   let enabled = false;
   let siteOn = false;
@@ -30,7 +30,7 @@
   const appeared = new WeakMap(); // item -> { t, key, pre, done }, for timings
   const timings = []; // { pre, wait } per item: decided before it appeared? ms from appearing to decided
   let late = 0; // items let through by the timeout before Jev answered
-  const removed = new Map(); // Clean feed: content key -> { title, channel, url, rule, p, kind }
+  const removed = new Map(); // Clean feed: content key -> { title, channel, url, rule, p, kind, canShow }
   const cleanTimings = []; // { outcome, continuation, ms } per feed response Clean feed handled
 
   const alive = () => Boolean(chrome.runtime?.id);
@@ -232,6 +232,7 @@
         for (const [key, probs] of Object.entries(cached || {})) results.set(key, { ...(results.get(key) || {}), ...probs });
       } catch {}
     }
+    if (!on) document.documentElement.removeAttribute('data-picky-paused');
     const hide = on ? [...results.keys()].filter((k) => k.startsWith('yt:') && hasAnswers(k) && decide(results.get(k)).state === 'hide') : [];
     window.postMessage({ __picky: 'config', clean: cleanActive(), hide }, location.origin);
   }
@@ -267,8 +268,52 @@
       decisions.set(key, { ...d, removed: true });
     }
     if (removed.size > 200) removed.delete(removed.keys().next().value);
-    PickyCleanUI.setRemoved([...removed.values()], document.body ? adapter.isDark() : false);
+    refreshRemoved();
     reportStats();
+  }
+
+  // Clean feed also folds away items that are already on the page (the first page, or picture
+  // re-judges) instead of leaving a tombstone. They stay in the DOM, so the panel can unfold them.
+  function noteCollapsed(el, key, d) {
+    const entry = removed.get(key);
+    if (!entry) {
+      const f = adapter.extract(el)?.feed_item || feedInfo.get(key) || {};
+      const id = key.slice(5);
+      removed.set(key, {
+        title: f.title || '', channel: f.channel || '', rule: d.rule?.text || '', p: d.p, kind: d.kind, canShow: true,
+        url: key.startsWith('yt:s:') ? `/shorts/${id}` : `/watch?v=${id}`,
+      });
+    }
+    decisions.set(key, { ...d, removed: true });
+    refreshRemoved();
+  }
+  function forgetCollapsed(key) {
+    if (!removed.get(key)?.canShow) return;
+    removed.delete(key);
+    refreshRemoved();
+  }
+  function refreshRemoved() {
+    const list = [...removed].map(([key, v]) => ({ key, ...v, shown: revealed.has(key) }));
+    PickyCleanUI.setRemoved(list, document.body ? adapter.isDark() : false, toggleShown);
+  }
+  function toggleShown(key) {
+    if (revealed.has(key)) revealed.delete(key);
+    else revealed.add(key);
+    const els = [...tracked].filter((el) => el.dataset.pickyKey === key);
+    els.forEach((el) => apply(el, key));
+    if (revealed.has(key)) els[0]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    refreshRemoved();
+  }
+  // A shelf (or an old-style grid row) whose items are all folded away folds away too, header and all.
+  const GROUPS = 'ytd-rich-grid-row, grid-shelf-view-model, ytd-reel-shelf-renderer, ytd-rich-shelf-renderer, ytd-shelf-renderer, ytd-horizontal-card-list-renderer';
+  function updateRow(el) {
+    if (adapter !== PickyAdapters.youtube) return;
+    const group = el.closest(GROUPS);
+    if (!group) return;
+    const sel = adapter.itemSelector;
+    const items = [...group.querySelectorAll(sel)].filter((i) => !i.parentElement.closest(sel) || !group.contains(i.parentElement.closest(sel)));
+    const empty = items.length > 0 && items.every((i) => i.classList.contains('picky-collapsed'));
+    (group.closest('ytd-rich-section-renderer') || group).classList.toggle('picky-collapsed-group', empty);
   }
 
   // An emptied continuation leaves YouTube's "load more" marker in view, and YouTube waits for it to
@@ -307,10 +352,16 @@
     if (adapter !== PickyAdapters.youtube || !m || typeof m.__picky !== 'string') return;
     if (m.__picky === 'judge-request' && Array.isArray(m.items) && cleanActive()) answerJudgeRequest(m);
     else if (m.__picky === 'pruned' && Array.isArray(m.keys)) noteRemoved(m.keys.slice(0, 200));
-    else if (m.__picky === 'paused' && cleanActive()) showEndNote();
+    else if (m.__picky === 'paused' && cleanActive()) {
+      document.documentElement.setAttribute('data-picky-paused', ''); // hides YouTube's spinner (content.css)
+      showEndNote();
+    }
     else if (m.__picky === 'emptied') onEmptied();
     else if (m.__picky === 'feed-start') lastFeedStart = performance.now();
-    else if (m.__picky === 'resumed') PickyCleanUI.hideEndNote();
+    else if (m.__picky === 'resumed') {
+      document.documentElement.removeAttribute('data-picky-paused');
+      PickyCleanUI.hideEndNote();
+    }
     else if (m.__picky === 'clean-timing' && cleanTimings.length < 2000) {
       cleanTimings.push({ outcome: String(m.outcome), continuation: Boolean(m.continuation), found: Number(m.found) || 0, removed: Number(m.removed) || 0, ms: Number(m.ms) || 0 });
     }
@@ -342,13 +393,24 @@
       seen.done = true;
       if (timings.length < 5000) timings.push({ pre: seen.pre, wait: performance.now() - seen.t });
     }
-    if (d.state === 'show') return clear(el);
+    const collapsible = d.state === 'hide' && cleanActive();
+    if (collapsible) noteCollapsed(el, key, d);
+    else forgetCollapsed(key);
+    if (d.state === 'show') {
+      clear(el);
+      return updateRow(el);
+    }
+    if (collapsible && !revealed.has(key)) {
+      setClass(el, 'picky-collapsed');
+      return updateRow(el);
+    }
     const state = revealed.has(key) ? 'revealed' : d.state === 'hide' ? 'hidden' : 'blurred';
     // Tiles keep their height when hidden so grids stay aligned.
     const height = el.classList.contains('picky-hidden') ? 0 : el.getBoundingClientRect().height;
     setClass(el, `picky-${state}`);
     if (state !== 'hidden' && getComputedStyle(el).position === 'static') el.classList.add('picky-anchor');
     renderLabel(el, state, d, key, height);
+    updateRow(el);
   }
 
   function setClass(el, cls) {
@@ -601,6 +663,7 @@
     unobserve();
     io.disconnect();
     document.documentElement.removeAttribute('data-picky-prehide');
+    document.documentElement.removeAttribute('data-picky-paused');
     for (const el of tracked) clear(el);
   }
 
@@ -639,7 +702,9 @@
     }
     // How early items were judged (scripts/e2e.js): decided before they appeared, and ms to decide.
     if (msg.type === 'getTimings') {
-      sendResponse({ timings, late, prefetched, prehide: document.documentElement.hasAttribute('data-picky-prehide'), cleanTimings, removed: [...removed.keys()] });
+      const fromFeed = [...removed].filter(([, v]) => !v.canShow).map(([k]) => k); // never reached the page
+      const folded = [...removed].filter(([, v]) => v.canShow).map(([k]) => k); // on the page, folded away
+      sendResponse({ timings, late, prefetched, prehide: document.documentElement.hasAttribute('data-picky-prehide'), cleanTimings, removed: fromFeed, folded });
     }
   });
 

@@ -32,6 +32,7 @@ const YT_ITEMS = [
 const youtube = {
   name: 'YouTube',
   site: 'youtube.com',
+  itemSelector: YT_ITEMS,
 
   // Outermost matches only: home wraps yt-lockup-view-model inside ytd-rich-item-renderer.
   findItems() {

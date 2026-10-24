@@ -74,3 +74,8 @@ html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(arti
 
 /* Clean feed end-of-feed note host (cleanui.js); its look lives in its shadow root. */
 .picky-end-note { display: block !important; width: 100%; flex: 0 0 100%; grid-column: 1 / -1; }
+
+/* Clean feed: folded-away items take no space, so the grid closes up. Paused loading hides YouTube's
+   spinner (visibility keeps the marker's position, so loading resumes normally afterwards). */
+.picky-collapsed, .picky-collapsed-group { display: none !important; }
+html[data-picky-paused] ytd-continuation-item-renderer { visibility: hidden !important; }

@@ -41,6 +41,10 @@
     li { padding: 9px 14px; border-bottom: 1px solid var(--line); }
     li:last-child { border-bottom: 0; }
     li a { color: var(--ink); font-weight: 600; text-decoration: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .row-top { display: flex; align-items: flex-start; gap: 10px; }
+    .row-top a { flex: 1; min-width: 0; }
+    .toggle { flex: none; border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
+    .toggle:hover { background: var(--wash); }
     li a:hover { text-decoration: underline; text-decoration-color: #FFD43B; text-decoration-thickness: 2px; text-underline-offset: 3px; }
     .meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; min-width: 0; font-size: 12px; }
     .meta .channel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -48,7 +52,7 @@
     .foot { margin: 0; padding: 10px 14px 12px; border-top: 1px solid var(--line); font-size: 12px; }
   `;
   let host = null;
-  let state = { items: [], dark: false, open: false };
+  let state = { items: [], dark: false, open: false, onToggle: null };
 
   function ensureHost() {
     if (host?.isConnected) return host.shadowRoot;
@@ -60,7 +64,7 @@
       <section class="panel pop" role="dialog" aria-label="Videos Picky removed" hidden>
         <div class="head">${MARK}<h2></h2><button class="close" type="button" aria-label="Close">×</button></div>
         <ol></ol>
-        <p class="foot muted">These never reached the page. Turn off Clean feed in the Picky popup to see them again.</p>
+        <p class="foot muted">Most never reached the page. Use Show to unfold one that did, or turn off Clean feed in the Picky popup.</p>
       </section>`;
     root.querySelector('.pill').onclick = () => setOpen(!state.open);
     root.querySelector('.close').onclick = () => setOpen(false);
@@ -112,7 +116,18 @@
         ch.textContent = `· ${it.channel}`;
         meta.append(ch);
       }
-      li.append(a, meta);
+      const top = document.createElement('div');
+      top.className = 'row-top';
+      top.append(a);
+      if (it.canShow) { // still on the page, folded away: unfold it in place
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'toggle';
+        toggle.textContent = it.shown ? 'Hide again' : 'Show';
+        toggle.onclick = () => state.onToggle?.(it.key);
+        top.append(toggle);
+      }
+      li.append(top, meta);
       return li;
     }));
   }
@@ -183,8 +198,8 @@
   }
 
   globalThis.PickyCleanUI = {
-    setRemoved(items, dark) {
-      state = { ...state, items, dark };
+    setRemoved(items, dark, onToggle) {
+      state = { ...state, items, dark, onToggle };
       if (!items.length) state.open = false;
       render();
     },
