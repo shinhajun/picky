@@ -24,3 +24,50 @@ html[data-picky-prehide] article:has(a[href*="/p/"], a[href*="/reel/"]):not([dat
 html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(article *):not([data-picky-ready]) > :not(.picky-label) {
   visibility: hidden !important;
 }
+
+/* Skeletons while an item waits: grey shapes like the platform's own loading state. YouTube reuses the
+   item's real thumbnail box and title line (made visible again, contents still hidden), so the shapes
+   match every layout; Instagram gets overlays. Never clickable, never moves the layout. */
+html[data-picky-prehide] { --picky-skel: #e9e9e9; --picky-shine: rgba(255, 255, 255, .75); }
+html[data-picky-prehide]:is([data-picky-theme="dark"], [dark]) { --picky-skel: #272727; --picky-shine: rgba(255, 255, 255, .06); }
+
+html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) :is(ytd-thumbnail, yt-thumbnail-view-model),
+html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) h3,
+html[data-picky-prehide] article:has(a[href*="/p/"], a[href*="/reel/"]):not([data-picky-ready])::after,
+html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(article *):not([data-picky-ready])::after {
+  visibility: visible !important;
+  pointer-events: none !important;
+  background: linear-gradient(100deg, transparent 35%, var(--picky-shine) 50%, transparent 65%) 0 0 / 300% 100% no-repeat, var(--picky-skel) !important;
+}
+html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) :is(ytd-thumbnail, yt-thumbnail-view-model) { border-radius: 12px; }
+html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) :is(ytd-thumbnail, yt-thumbnail-view-model) *,
+html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) h3 * { visibility: hidden !important; }
+html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) h3 {
+  color: transparent !important;
+  -webkit-mask: linear-gradient(#000 0 0) 0 3px / 94% 14px no-repeat, linear-gradient(#000 0 0) 0 25px / 62% 14px no-repeat;
+  mask: linear-gradient(#000 0 0) 0 3px / 94% 14px no-repeat, linear-gradient(#000 0 0) 0 25px / 62% 14px no-repeat;
+}
+
+html[data-picky-prehide] article:has(a[href*="/p/"], a[href*="/reel/"]):not([data-picky-ready]), html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(article *):not([data-picky-ready]) { position: relative; }
+html[data-picky-prehide] article:has(a[href*="/p/"], a[href*="/reel/"]):not([data-picky-ready])::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 52px; pointer-events: none;
+  background: radial-gradient(circle at 20px 26px, var(--picky-skel) 16px, transparent 16.5px),
+    linear-gradient(var(--picky-skel) 0 0) 46px 20px / 130px 12px no-repeat;
+}
+html[data-picky-prehide] article:has(a[href*="/p/"], a[href*="/reel/"]):not([data-picky-ready])::after { content: ''; position: absolute; left: 0; top: 56px; width: 100%; aspect-ratio: 1; border-radius: 4px; }
+html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(article *):not([data-picky-ready])::after { content: ''; position: absolute; inset: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) :is(ytd-thumbnail, yt-thumbnail-view-model),
+  html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *):not([data-picky-ready]) h3,
+  html[data-picky-prehide] article:has(a[href*="/p/"], a[href*="/reel/"]):not([data-picky-ready])::after,
+  html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(article *):not([data-picky-ready])::after { animation: picky-shimmer 1.4s linear infinite; }
+
+  /* Skeleton -> result: the item and any label fade in. */
+  html[data-picky-prehide] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model):not(:is(ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-shorts-lockup-view-model) *)[data-picky-ready=""] > :not(.picky-label),
+  html[data-picky-prehide] :is(article, a)[data-picky-ready=""] > :not(.picky-label),
+  .picky-hidden > .picky-label,
+  .picky-blurred > .picky-label { animation: picky-fade-in .12s ease-out; }
+}
+@keyframes picky-shimmer { from { background-position: 100% 0, 0 0; } to { background-position: 0 0, 0 0; } }
+@keyframes picky-fade-in { from { opacity: 0; } }

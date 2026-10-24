@@ -379,8 +379,17 @@
   let appearAt = null;
   let addedAt = null;
 
+  // Skeleton colours follow the page theme (content.css). Checked at most every 2 s, once <body> exists.
+  let themeCheckedAt = -Infinity;
+  function updateTheme() {
+    if (!document.body || performance.now() - themeCheckedAt < 2000) return;
+    themeCheckedAt = performance.now();
+    document.documentElement.setAttribute('data-picky-theme', adapter.isDark() ? 'dark' : 'light');
+  }
+
   function scan() {
     if (!active()) return;
+    if (builtIn) updateTheme();
     appearAt = addedAt ?? performance.now();
     addedAt = null;
     for (const el of adapter.findItems()) {
