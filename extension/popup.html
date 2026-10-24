@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Picky</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1 class="wordmark">picky</h1>
+      <p class="tagline">The internet, but picky.</p>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="enabled" role="switch" aria-label="Picky on this browser">
+      <span aria-hidden="true"></span>
+    </label>
+  </header>
+
+  <section class="banner" id="keyBanner" hidden>
+    <p id="keyBannerText">Paste your TypeSafe API key so Picky can read your feed. It stays in this browser.</p>
+    <form id="keyForm" autocomplete="off">
+      <input id="keyInput" type="password" spellcheck="false" placeholder="TypeSafe API key" aria-label="TypeSafe API key">
+      <button class="btn" type="submit" id="keySave">Save &amp; test</button>
+    </form>
+    <p class="key-result" id="keyResult" role="status"></p>
+  </section>
+
+  <section class="tab" id="tab" aria-live="polite">
+    <div class="site-row">
+      <p class="site" id="site">This tab</p>
+      <label class="pick" id="pick" hidden>
+        <span>Pick this site</span>
+        <span class="switch switch-sm">
+          <input type="checkbox" id="pickSite" role="switch">
+          <span aria-hidden="true"></span>
+        </span>
+      </label>
+    </div>
+    <p class="site-note" id="siteNote" hidden>Picky leaves this site alone until you pick it.</p>
+    <dl class="stats">
+      <div class="stat" data-kind="hidden"><dt>hidden</dt><dd id="hidden">0</dd></div>
+      <div class="stat" data-kind="blurred"><dt>unsure</dt><dd id="blurred">0</dd></div>
+      <div class="stat" data-kind="shown"><dt>shown</dt><dd id="shown">0</dd></div>
+    </dl>
+    <button type="button" class="facts-link" id="openFacts">
+      <span class="facts-mark">Feed Facts</span>
+      <span class="facts-hint">What your feed was made of</span>
+    </button>
+  </section>
+
+  <section class="rules">
+    <h2>Your rules</h2>
+    <p class="mode" id="mode" hidden></p>
+    <ul id="ruleList"></ul>
+    <div class="empty" id="empty" hidden>
+      <p>Say what you want, or don’t want, in your own words. One rule per line, any language.</p>
+      <div class="examples">
+        <button type="button" class="example">cats only</button>
+        <button type="button" class="example">no politics</button>
+        <button type="button" class="example">hide One Piece spoilers</button>
+      </div>
+    </div>
+    <form id="addForm" autocomplete="off">
+      <input id="ruleInput" maxlength="120" placeholder="Add a rule, like “no crypto hype”" aria-label="New rule">
+      <button class="btn" type="submit">Add</button>
+    </form>
+  </section>
+
+  <footer>
+    <span class="status" id="status"><i></i><span>Jev</span><span class="cost" id="cost"></span></span>
+    <button type="button" class="link" id="settings">Settings</button>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Feed Facts · Picky</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="facts.css">
+</head>
+<body>
+  <header class="bar-top">
+    <span class="wordmark">picky</span>
+    <div class="scope" role="radiogroup" aria-label="What to count">
+      <button type="button" role="radio" data-scope="tab" id="scopeTab">This tab</button>
+      <button type="button" role="radio" data-scope="session" id="scopeSession">This session</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="pack">
+      <article class="label" aria-labelledby="factsTitle">
+        <h1 id="factsTitle">Feed Facts</h1>
+        <p class="servings" id="servings">0 feeds per session</p>
+        <p class="serving-size"><span>Serving size</span><span id="servingSize">1 scroll</span></p>
+        <div class="rule-thick"></div>
+        <p class="amount" id="amount">Amount per session</p>
+        <p class="calories"><span>Cost</span><span id="cost">$0</span></p>
+        <p class="cost-note" id="costNote">Nothing spent yet</p>
+        <div class="rule-medium"></div>
+        <p class="dv"><span>% Feed Value*</span></p>
+        <ul class="rows" id="rows"></ul>
+        <div class="rule-thick"></div>
+        <ul class="rows" id="sites"></ul>
+        <div class="rule-medium"></div>
+        <ul class="rows" id="extras"></ul>
+        <div class="rule-medium"></div>
+        <p class="foot">* The % Feed Value (FV) tells you how much of what you scrolled went each way. 2,000 posts a day is used for general scrolling advice.</p>
+      </article>
+    <p class="ingredients" id="ingredients"></p>
+    </div>
+    <p class="note" id="note">Updates live while you scroll. Counts reset when Chrome closes.</p>
+  </main>
+
+  <script type="module" src="facts.js"></script>
+</body>
+</html>

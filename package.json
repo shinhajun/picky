@@ -1,0 +1,13 @@
+{
+  "name": "picky",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node scripts/jev-bench.js",
+    "bench:images": "node scripts/jev-image-bench.js",
+    "e2e": "node scripts/e2e.js"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  }
+}

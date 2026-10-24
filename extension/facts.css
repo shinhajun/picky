@@ -1,0 +1,72 @@
+/* Feed Facts: a printed FDA-style label sitting on the Picky page. The label stays black on white
+   in both themes, like the real thing. */
+
+body { min-height: 100vh; background: var(--wash); }
+
+.bar-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  max-width: 880px; margin: 0 auto; padding: 22px 16px 0;
+}
+.bar-top .wordmark { font-size: 30px; }
+
+.scope { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--paper); border: 1px solid var(--line); }
+.scope button {
+  border: 0; background: transparent; border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: 13px; color: var(--muted);
+}
+.scope button[aria-checked="true"] { background: var(--btn); color: var(--btn-fg); }
+.scope button:disabled { opacity: .4; cursor: default; }
+
+main { display: flex; flex-direction: column; align-items: center; padding: 28px 16px 56px; }
+
+/* ---- the label ---- */
+.pack { width: 100%; max-width: 25em; font-size: clamp(14px, 0.6vw + 10px, 18px); }
+.label {
+  --k: #000;
+  background: #fff;
+  color: var(--k);
+  border: 1px solid var(--k);
+  padding: 0.25em 0.45em 0.45em;
+  font-family: 'Libre Franklin', 'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .04), 0 18px 40px -18px rgba(27, 24, 56, .35);
+}
+.label h1 {
+  margin: 0; font-size: 3em; font-weight: 900; letter-spacing: -0.035em; line-height: 1.02;
+  font-stretch: condensed; white-space: nowrap;
+}
+.label p { margin: 0; }
+.servings { font-size: 1.05em; padding-top: 0.2em; border-top: 1px solid var(--k); margin-top: 0.15em !important; }
+.serving-size { display: flex; justify-content: space-between; font-weight: 900; font-size: 1.15em; padding-bottom: 0.15em; }
+.rule-thick { height: 0.6em; background: var(--k); }
+.rule-medium { height: 0.3em; background: var(--k); }
+.amount { font-weight: 800; font-size: 0.8em; padding-top: 0.25em; }
+.calories { display: flex; justify-content: space-between; align-items: baseline; font-weight: 900; line-height: 1; padding-bottom: 0.1em; }
+.calories span:first-child { font-size: 1.75em; letter-spacing: -0.01em; }
+.calories span:last-child { font-size: 2.6em; letter-spacing: -0.03em; }
+.cost-note { display: flex; justify-content: space-between; gap: 1em; font-size: 0.8em; padding: 0.05em 0 0.25em; }
+.dv { text-align: right; font-weight: 800; font-size: 0.8em; padding: 0.2em 0; }
+
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; justify-content: space-between; gap: 1em; border-top: 1px solid var(--k); padding: 0.18em 0; font-size: 0.95em; }
+.dv + .rows .row:first-child, .rule-thick + .rows .row:first-child, .rule-medium + .rows .row:first-child { border-top: 0; }
+.row b { font-weight: 900; }
+.row .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .pct { font-weight: 900; flex: none; }
+.row.sub { padding-left: 1.1em; }
+.row.sub .what { font-weight: 400; }
+.row.empty { justify-content: flex-start; font-style: italic; }
+
+.foot { font-size: 0.72em; line-height: 1.3; padding-top: 0.35em; padding-left: 0.6em; text-indent: -0.6em; }
+
+.ingredients {
+  margin: 1.1em 0 0; font-size: 0.72em;
+  font-family: 'Libre Franklin', 'Helvetica Neue', Helvetica, Arial, sans-serif; line-height: 1.35; color: var(--ink);
+  text-transform: uppercase;
+}
+.ingredients b { font-weight: 900; }
+.note { margin: 1.6em 0 0; font-size: 13px; color: var(--muted); text-align: center; }
+
+@media (prefers-color-scheme: dark) {
+  .label { box-shadow: 0 18px 50px -12px rgba(0, 0, 0, .7); }
+}
