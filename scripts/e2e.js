@@ -1,5 +1,5 @@
 // Loads the unpacked extension in Playwright's Chromium (headless) and checks, against the live Jev API:
-// first-run key entry in the popup, YouTube (regression), per-site opt-in on other sites, the picture path,
+// first-run key entry in the popup, YouTube (regression), the per-site off switch on other sites, the picture path,
 // Instagram (live profile grid + saved home-feed and reels fixtures), usage/cost counters, the popup,
 // Feed Facts and the options page.
 // Usage: node scripts/e2e.js     Screenshots go to .e2e/
@@ -218,31 +218,32 @@ await page.waitForTimeout(3500);
 const ytOff = await page.evaluate(readState, true);
 record('site-off-no-prehide', !ytOff.prehide && ytOff.keyed === 0, { prehide: ytOff.prehide, keyed: ytOff.keyed });
 
-// ---- 3. Per-site opt-in on a generic site ----
+// ---- 3. Generic sites are on by default; the popup switch turns one off ----
 await setRules(['No posts about C, C++ or Rust']);
 await setSites({});
 await page.goto('https://lobste.rs/', { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(3000);
-const before = await page.evaluate(readState, false);
+const before = await settle(page);
+await page.screenshot({ path: path.join(outDir, 'generic-lobsters.png') });
 const lobstersTab = await tabIdOf(page);
 await popup.goto(`chrome-extension://${extId}/popup.html?tab=${lobstersTab}`);
 await popup.waitForTimeout(600);
-await popup.screenshot({ path: path.join(outDir, 'popup-unpicked.png'), fullPage: true });
+await popup.screenshot({ path: path.join(outDir, 'popup-picked.png'), fullPage: true });
 const pickVisible = await popup.isVisible('#pick');
 await popup.click('#pick');
 await popup.waitForTimeout(300);
 const sitesNow = await sw.evaluate(() => chrome.storage.local.get('sites').then((s) => s.sites));
 await page.bringToFront();
-const after = await settle(page);
-await page.screenshot({ path: path.join(outDir, 'generic-lobsters.png') });
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(3000);
+const after = await page.evaluate(readState, false);
 await popup.reload();
 await popup.waitForTimeout(600);
-await popup.screenshot({ path: path.join(outDir, 'popup-picked.png'), fullPage: true });
-record('opt-in-toggle', before.keyed === 0 && pickVisible && sitesNow?.['lobste.rs'] === true && after.keyed > 0 && after.pending === 0 && !after.prehide,
-  { keyedBeforePick: before.keyed, keyedAfterPick: after.keyed, hidden: after.hidden, blurred: after.blurred, sites: sitesNow, prehide: after.prehide });
+await popup.screenshot({ path: path.join(outDir, 'popup-unpicked.png'), fullPage: true });
+record('site-off-toggle', before.keyed > 0 && before.pending === 0 && !before.prehide && pickVisible && sitesNow?.['lobste.rs'] === false && after.keyed === 0,
+  { keyedByDefault: before.keyed, hidden: before.hidden, blurred: before.blurred, keyedAfterOff: after.keyed, sites: sitesNow, prehide: before.prehide });
 
 await setRules(['No AI or LLM posts']);
-await setSites({ 'lobste.rs': true, 'dev.to': true });
+await setSites({});
 await page.goto('https://dev.to/', { waitUntil: 'domcontentloaded' });
 await settle(page);
 await page.mouse.wheel(0, 2500);

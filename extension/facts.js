@@ -14,9 +14,9 @@ function el(tag, className, text) {
 }
 
 function total(snapshots) {
-  const t = { feeds: snapshots.length, judged: 0, hidden: 0, blurred: 0, shown: 0, removed: 0, withPicture: 0, hiddenBy: {}, offTopicFor: {}, fitBy: {}, sites: {} };
+  const t = { feeds: snapshots.length, judged: 0, hidden: 0, blurred: 0, shown: 0, removed: 0, hiddenAds: 0, withPicture: 0, hiddenBy: {}, offTopicFor: {}, fitBy: {}, sites: {} };
   for (const s of snapshots) {
-    for (const k of ['judged', 'hidden', 'blurred', 'shown', 'removed', 'withPicture']) t[k] += s[k] || 0;
+    for (const k of ['judged', 'hidden', 'blurred', 'shown', 'removed', 'hiddenAds', 'withPicture']) t[k] += s[k] || 0;
     for (const map of ['hiddenBy', 'offTopicFor', 'fitBy']) {
       for (const [rule, n] of Object.entries(s[map] || {})) t[map][rule] = (t[map][rule] || 0) + n;
     }
@@ -60,6 +60,7 @@ function render({ facts = {}, status = {}, usage = {}, rules = [] }) {
   } else {
     rows.push(row('', t.hidden, t.judged, { bold: 'Hidden' }));
     if (t.removed) rows.push(row('Removed before drawn', t.removed, t.judged, { sub: true }));
+    if (t.hiddenAds) rows.push(row('Ads', t.hiddenAds, t.judged, { sub: true }));
     const reasons = [...byCount(t.hiddenBy), ...byCount(t.offTopicFor).map(([rule, n]) => [`Off-topic for ${rule}`, n])];
     for (const [what, n] of reasons.sort((a, b) => b[1] - a[1])) rows.push(row(what, n, t.judged, { sub: true }));
     rows.push(row('', t.blurred, t.judged, { bold: 'Unsure' }));
@@ -90,7 +91,7 @@ function render({ facts = {}, status = {}, usage = {}, rules = [] }) {
   const ruleList = rules.map((r) => r.text).join(', ');
   $('ingredients').replaceChildren(
     el('b', '', 'Ingredients: '),
-    'titles, captions, channel names, hashtags, image descriptions, thumbnails (only when Jev wasn’t sure)',
+    'titles, captions, channel names, hashtags, ad text and landing sites, image descriptions, pictures (only when Jev wasn’t sure)',
     ruleList ? `, and your rules (${ruleList}).` : '.',
   );
 }

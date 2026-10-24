@@ -32,6 +32,8 @@ export function ruleQuestion(ruleText) {
   };
 }
 
+// Polarity (hide or only show) and scope: rules about ads apply only to ads, and a rule about every
+// ad needs no per-item question at all.
 export function polarityQuestion(ruleText) {
   return {
     state: { user_rule: ruleText },
@@ -42,6 +44,15 @@ export function polarityQuestion(ruleText) {
         criteria: {
           want: 'They want to see this subject, or only this subject (e.g. "cats only", "just cooking videos", "고양이 영상만")',
           avoid: 'They want this subject hidden, removed or avoided (e.g. "no politics", "hide spoilers", "정치 얘기 싫어")',
+        },
+      },
+      scope: {
+        type: 'choice',
+        instructions: 'A viewer wrote `user_rule` to filter what they see on web pages and feeds. Is the rule about advertisements, and if so, which ones?',
+        criteria: {
+          every_ad: 'It is about ads in general, whatever they promote (e.g. "no ads", "hide sponsored posts", "광고 싫어")',
+          some_ads: 'It is about ads for certain things only (e.g. "no gambling ads", "only tech ads", "hide crypto promotions")',
+          content: 'It is about the content itself, not about ads (e.g. "no politics", "cats only", "no crypto hype")',
         },
       },
     },

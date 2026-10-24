@@ -206,16 +206,16 @@ async function classifyRules({ retryGuesses = false } = {}) {
   const { rules = [] } = await chrome.storage.local.get('rules');
   const apiKey = await getApiKey();
   const todo = rules.filter((r) =>
-    !classifying.has(r.id) && (!r.polarity || (retryGuesses && apiKey && r.polaritySource === 'guess')));
+    !classifying.has(r.id) && (!r.polarity || !r.scope || (retryGuesses && apiKey && r.polaritySource === 'guess')));
   await Promise.all(todo.map(async (rule) => {
     classifying.add(rule.id);
     try {
       const result = await classify(rule.text, apiKey);
       const { rules: now = [] } = await chrome.storage.local.get('rules');
       const target = now.find((r) => r.id === rule.id);
-      // Leave rules the user edited or toggled in the meantime alone.
-      if (!target || target.text !== rule.text || target.polaritySource === 'user') return;
-      Object.assign(target, result);
+      // Leave rules the user edited in the meantime alone, and a polarity the user chose.
+      if (!target || target.text !== rule.text || (target.polaritySource === 'user' && target.scope)) return;
+      Object.assign(target, target.polaritySource === 'user' ? { scope: result.scope } : result);
       await chrome.storage.local.set({ rules: now });
     } finally {
       classifying.delete(rule.id);
@@ -230,17 +230,23 @@ async function classify(text, apiKey) {
       const res = await callJev(apiKey, polarityQuestion(text));
       countCall(res);
       const a = res.answers.polarity;
-      return { polarity: a.choice, polaritySource: 'jev', polarityConf: a.probabilities?.[a.choice] ?? null };
+      const scope = res.answers.scope?.choice;
+      return { polarity: a.choice, polaritySource: 'jev', polarityConf: a.probabilities?.[a.choice] ?? null, scope: SCOPES.includes(scope) ? scope : guessScope(text) };
     } catch (err) {
       noteError(err);
     }
   }
-  return { polarity: guessPolarity(text), polaritySource: 'guess', polarityConf: null };
+  return { polarity: guessPolarity(text), polaritySource: 'guess', polarityConf: null, scope: guessScope(text) };
 }
 
-// Offline fallback only; Jev decides whenever a key is set.
+// Offline fallbacks only; Jev decides whenever a key is set.
 function guessPolarity(text) {
   return /\b(only|just|more)\b|만\s*$|만\s|보여|좋아/i.test(text) ? 'want' : 'avoid';
+}
+const SCOPES = ['content', 'some_ads', 'every_ad'];
+function guessScope(text) {
+  if (!/\b(ads?|adverts?|advertis\w*|sponsored|promoted)\b|광고/i.test(text)) return 'content';
+  return /^\s*(no|hide|block|remove)?\s*(all\s+)?(ads?|adverts?|advertis\w*|sponsored( posts| content)?|promoted( posts| content)?|광고)(\s+at all)?\s*(싫어|빼줘)?\s*$/i.test(text) ? 'every_ad' : 'some_ads';
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -278,15 +284,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'cachedProbs') {
     cacheReady.then(() => {
       const byRuleKey = new Map((msg.rules || []).map((text) => [ruleKey(text), text]));
+      const only = Array.isArray(msg.keys) ? new Set(msg.keys) : null; // just these content keys
       const out = {};
       for (const [k, v] of cache) {
         const cut = k.lastIndexOf('|');
         const text = byRuleKey.get(k.slice(cut + 1));
-        if (text !== undefined) (out[k.slice(0, cut)] ??= {})[text] = v;
+        if (text !== undefined && (!only || only.has(k.slice(0, cut)))) (out[k.slice(0, cut)] ??= {})[text] = v;
       }
       for (const key in out) if (Object.keys(out[key]).length < byRuleKey.size) delete out[key];
       sendResponse(out);
     });
+    return true;
+  }
+  // An ad frame asks the tab's top page whether its creative should be judged (content.js decides).
+  if (msg.type === 'adGate') {
+    if (sender.tab?.id == null || !sender.frameId) return false;
+    chrome.tabs.sendMessage(sender.tab.id, { type: 'adGate' }, { frameId: 0 }).then(sendResponse, () => sendResponse({ ok: false }));
     return true;
   }
   // Calls made from extension pages (the API key test in the popup and options page).

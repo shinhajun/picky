@@ -4,6 +4,7 @@
 //   key(el) -> string | null      extract(el) -> state object | null (null = not rendered yet)
 //   image(el) -> picture URL | null (used only when text alone leaves Jev unsure)
 //   shape(el) -> 'tile' | 'short' | 'row'      isDark() -> boolean
+//   labelParent(el), companions(el) (generic only): where the label goes, and rows that belong to the item
 // Built-in adapters also have `site`, the key Picky uses for the per-site on/off switch.
 
 const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -96,7 +97,7 @@ const youtube = {
 // ---- generic: no class names, only semantics (article/role) and repeated sibling structure ----
 
 const CHROME = 'nav, header, footer, aside, form, dialog, menu, [role="navigation"], [role="banner"], [role="contentinfo"], [role="menu"], [role="menubar"], [role="tablist"], [role="dialog"], [contenteditable=""], [contenteditable="true"]';
-const CONTAINERS = 'ul, ol, div, section, main, [role="list"], [role="feed"], [role="grid"]';
+const CONTAINERS = 'ul, ol, div, section, main, tbody, [role="list"], [role="feed"], [role="grid"]';
 
 function realLinks(el) {
   const links = [...el.querySelectorAll('a[href]')];
@@ -107,13 +108,21 @@ function realLinks(el) {
   });
 }
 
+// Menus, filters and tag lists outside <nav>: only short links (or checkboxes), no headline.
+function navLike(el) {
+  if (el.querySelector('input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="radio"]')) return true;
+  const links = realLinks(el).map((a) => a.textContent.trim().length).filter((n) => n > 0);
+  return links.length >= 3 && links.every((n) => n < 20);
+}
+
 function looksLikeItem(el, maxText) {
   if (el.classList.contains('picky-label') || el.closest(CHROME)) return false;
   const len = el.textContent.trim().length;
   if (len < 15 || len > maxText) return false;
-  if (!realLinks(el).length) return false;
+  if (!realLinks(el).length || navLike(el)) return false;
   const r = el.getBoundingClientRect();
-  return r.width >= 120 && r.height >= 24;
+  const minHeight = el.tagName === 'TR' ? 14 : 24; // table rows are dense (Hacker News: 19 px)
+  return r.width >= 120 && r.height >= minHeight && r.height < innerHeight * 2.5; // taller: the page itself, not an item
 }
 
 const generic = {
@@ -122,9 +131,9 @@ const generic = {
   findItems() {
     if (!document.body) return [];
     const found = new Set();
-    for (const el of document.querySelectorAll('article, [role="article"]')) {
-      if (looksLikeItem(el, 6000)) found.add(el);
-    }
+    // A lone article is the page being read, not an item in a feed.
+    const articles = [...document.querySelectorAll('article, [role="article"]')].filter((el) => looksLikeItem(el, 6000));
+    if (articles.length >= 2) articles.forEach((el) => found.add(el));
     // Repeated siblings: a container whose children mostly share a tag and each look like a card.
     for (const c of document.body.querySelectorAll(CONTAINERS)) {
       if (c.childElementCount < 4) continue;
@@ -139,7 +148,9 @@ const generic = {
       for (const g of groups.values()) if (g.length > group.length) group = g;
       if (group.length < 4) continue;
       const good = group.filter((k) => looksLikeItem(k, 2000));
-      if (good.length >= 4 && good.length >= group.length * 0.6) good.forEach((k) => found.add(k));
+      // Table rows: an item can span rows (Hacker News: title, then points/comments, then a spacer).
+      const share = c.tagName === 'TBODY' ? 0.3 : 0.6;
+      if (good.length >= 4 && good.length >= group.length * share) good.forEach((k) => found.add(k));
     }
     // Keep the innermost candidates: a row of cards should yield the cards.
     const containers = new Set();
@@ -196,6 +207,20 @@ const generic = {
 
   shape() {
     return 'row';
+  },
+
+  // A table row can't hold a block label: it goes in the row's widest cell.
+  labelParent(el) {
+    if (el.tagName !== 'TR') return el;
+    return [...el.cells].sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0] || el;
+  },
+
+  // The rows after a table-row item that aren't items themselves (its points and comments line).
+  companions(el) {
+    const rows = [];
+    if (el.tagName !== 'TR') return rows;
+    for (let n = el.nextElementSibling; n?.tagName === 'TR' && rows.length < 2 && !looksLikeItem(n, 2000); n = n.nextElementSibling) rows.push(n);
+    return rows;
   },
 
   isDark() {

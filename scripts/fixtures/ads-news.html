@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Daily Byte</title>
+<!-- A news page with the ad formats Picky has to find: a GPT leaderboard whose creative sits in a
+     cross-origin frame nested in another (safeframe), AdSense and Amazon iframes, a same-origin
+     "friendly" GPT frame written by script, an image-only creative, a Taboola widget and a card
+     labelled Sponsored. Served by scripts/e2e-web.js at https://news.picky-fixture.test/. -->
+<style>
+  :root { --bg: #ffffff; --ink: #16181d; --muted: #5f6672; --line: #e3e5ea; --band: #f2f3f5; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111317; --ink: #eceef2; --muted: #9aa1ad; --line: #2a2e36; --band: #1a1d23; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 Georgia, serif; }
+  a { color: inherit; text-decoration: none; }
+  header, footer { padding: 14px 32px; border-bottom: 1px solid var(--line); font-family: system-ui, sans-serif; }
+  header nav a, footer nav a { margin-right: 18px; color: var(--muted); font-size: 14px; }
+  header h1 { margin: 0 0 6px; font-size: 30px; }
+  .band { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0 14px; background: var(--band); }
+  .ad-label { font: 11px system-ui, sans-serif; letter-spacing: .04em; color: var(--muted); }
+  .wrap { display: grid; grid-template-columns: 1fr 320px; gap: 32px; max-width: 1180px; margin: 24px auto; padding: 0 32px; }
+  ul.stories { list-style: none; margin: 0; padding: 0; }
+  ul.stories li { display: flex; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  ul.stories li .thumb { flex: none; width: 120px; height: 80px; border-radius: 6px; background: linear-gradient(135deg, #8aa4c8, #3d5a80); }
+  ul.stories li h2 { margin: 0 0 4px; font-size: 19px; }
+  ul.stories li p { margin: 0; color: var(--muted); font-size: 14px; }
+  ul.stories li .tag { font: 600 11px system-ui, sans-serif; color: #a15c00; }
+  .inline-ad { margin: 18px 0; padding: 8px 0 12px; text-align: center; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .inline-ad p { margin: 0 0 6px; font: 12px system-ui, sans-serif; color: var(--muted); }
+  aside .box { margin-bottom: 24px; text-align: center; }
+  .trc_related_container { margin-top: 28px; font-family: system-ui, sans-serif; }
+  .trc_related_container .head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .trc_related_container .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .trc_related_container .card .img { height: 90px; border-radius: 6px; background: linear-gradient(135deg, #f2c94c, #f2994a); }
+  .trc_related_container .card b { display: block; margin-top: 6px; font-size: 14px; }
+  .trc_related_container .card span { font-size: 12px; color: var(--muted); }
+  iframe { border: 0; display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>The Daily Byte</h1>
+  <nav><a href="/world">World</a><a href="/politics">Politics</a><a href="/tech">Tech</a><a href="/sport">Sport</a><a href="/money">Money</a></nav>
+</header>
+
+<div class="band">
+  <span class="ad-label">Advertisement</span>
+  <div id="div-gpt-ad-1700000000001-0">
+    <iframe id="google_ads_iframe_/1234/top_0" title="3rd party ad content" width="728" height="90"
+      src="https://tpc.googlesyndication.com/safeframe/1-0-40/html/container.html?c=casino"></iframe>
+  </div>
+</div>
+
+<div class="wrap">
+  <main>
+    <ul class="stories">
+      <li><div class="thumb"></div><div><h2><a href="/politics/senate-budget">Senate passes budget after all-night session</a></h2><p>Lawmakers voted 51-49 shortly before dawn after a marathon debate over spending caps.</p></div></li>
+      <li><div class="thumb"></div><div><h2><a href="/tech/m5-macbook-review">Review: the M5 MacBook Pro is fast, and very quiet</a></h2><p>Apple’s new laptop runs local AI models without spinning up its fans.</p></div></li>
+      <li><div class="thumb"></div><div><h2><a href="/money/bitcoin-etf-inflows">Bitcoin jumps 8% as ETF inflows surge</a></h2><p>Analysts point to record weekly inflows into spot bitcoin funds.</p></div></li>
+      <li class="promo"><div class="thumb"></div><div><span class="tag">Sponsored</span><h2><a href="https://www.surfvpn.example/deal">The VPN 9 out of 10 travelers swear by</a></h2><p>Stream your shows from anywhere. 80% off for a limited time.</p></div></li>
+      <li><div class="thumb"></div><div><h2><a href="/sport/champions-league">Late goal sends Madrid into the quarter-finals</a></h2><p>A stoppage-time header settled a tense night at the Bernabéu.</p></div></li>
+      <li><div class="thumb"></div><div><h2><a href="/local/bakery-award">Corner bakery wins national sourdough award</a></h2><p>The two-person shop beat 400 entries with a rye loaf.</p></div></li>
+    </ul>
+
+    <div class="inline-ad">
+      <p>Story continues below advertisement</p>
+      <iframe width="300" height="250" style="margin: 0 auto"
+        src="https://aax-us-east.amazon-adsystem.com/e/dtb/admi?c=crypto"></iframe>
+    </div>
+
+    <ul class="stories">
+      <li><div class="thumb"></div><div><h2><a href="/science/sleep-memory">New study links deep sleep to sharper memory</a></h2><p>Researchers tracked 2,000 volunteers for a decade.</p></div></li>
+      <li><div class="thumb"></div><div><h2><a href="/world/heatwave-europe">Europe braces for a late-season heatwave</a></h2><p>Temperatures could pass 35°C in parts of Spain and Italy.</p></div></li>
+      <li><div class="thumb"></div><div><h2><a href="/tech/open-source-llm">An open-source model now runs on a phone</a></h2><p>The 3-billion-parameter model fits in under 2 GB of memory.</p></div></li>
+      <li><div class="thumb"></div><div><h2><a href="/food/autumn-soups">Five autumn soups to make this weekend</a></h2><p>From roasted squash to a spicy lentil stew.</p></div></li>
+    </ul>
+
+    <div id="taboola-below-article-thumbnails" class="trc_related_container">
+      <div class="head"><span>You may like</span><span>Sponsored Links by Taboola</span></div>
+      <div class="cards">
+        <a class="card" href="https://www.slimfast-tricks.example/1"><div class="img"></div><b>Doctors stunned: this 10-second trick melts belly fat</b><span>SlimDaily</span></a>
+        <a class="card" href="https://www.hearing-deals.example/2"><div class="img"></div><b>Seniors are switching to this $99 hearing aid</b><span>HearWell</span></a>
+        <a class="card" href="https://www.rpg-legends.example/3"><div class="img"></div><b>Play this game for 1 minute and see why everyone is hooked</b><span>Raid Legends</span></a>
+      </div>
+    </div>
+  </main>
+
+  <aside>
+    <div class="box">
+      <span class="ad-label">Advertisement</span>
+      <ins class="adsbygoogle" style="display:block;width:300px;height:250px;margin:4px auto 0">
+        <iframe width="300" height="250" src="https://googleads.g.doubleclick.net/pagead/ads?c=tech"></iframe>
+      </ins>
+    </div>
+    <div class="box">
+      <span class="ad-label">Advertisement</span>
+      <div id="div-gpt-ad-1700000000002-0" style="width:300px;height:250px;margin:4px auto 0">
+        <iframe id="google_ads_iframe_/1234/side_0" title="3rd party ad content" width="300" height="250"></iframe>
+      </div>
+    </div>
+    <div class="box">
+      <span class="ad-label">Advertisement</span>
+      <div id="div-gpt-ad-1700000000003-0" style="width:300px;height:250px;margin:4px auto 0">
+        <iframe id="google_ads_iframe_/1234/side_1" title="3rd party ad content" width="300" height="250"
+          src="https://tpc.googlesyndication.com/safeframe/1-0-40/html/container.html?c=casino-img"></iframe>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<footer><nav><a href="/about">About us</a><a href="/contact">Contact</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/advertise">Advertise</a></nav></footer>
+
+<script>
+  // GPT's non-safeframe ("friendly") rendering: the ad script writes the creative into a same-origin frame.
+  addEventListener('load', () => setTimeout(() => {
+    const doc = document.getElementById('google_ads_iframe_/1234/side_0').contentDocument;
+    doc.open();
+    doc.write(`<!doctype html><html><body style="margin:0;font:600 15px system-ui,sans-serif;background:#fff;color:#111">
+      <a href="https://adclick.g.doubleclick.net/pcs/click?adurl=https://www.nike.com/running/pegasus" target="_blank" style="display:block;color:inherit;text-decoration:none">
+        <img src="https://tpc.googlesyndication.com/simgad/shoe.png" alt="Nike Pegasus 41 running shoe" width="300" height="180" style="display:block">
+        <div style="padding:8px 10px">Nike Pegasus 41 running shoes: 30% off this week</div>
+      </a></body></html>`);
+    doc.close();
+  }, 300));
+</script>
+</body>
+</html>

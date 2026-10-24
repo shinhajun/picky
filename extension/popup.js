@@ -60,12 +60,16 @@ function ruleRow(rule) {
     updateRule(rule.id, { polarity: polarity === 'want' ? 'avoid' : 'want', polaritySource: 'user' });
   };
 
+  // Rules about ads apply only to ads.
+  const scope = rule.scope === 'every_ad' ? el('span', 'scope', 'every ad') : rule.scope === 'some_ads' ? el('span', 'scope', 'ads') : null;
+  if (scope) scope.title = rule.scope === 'every_ad' ? 'Applies to every ad Picky finds' : 'Applies only to ads';
+
   const remove = el('button', 'remove', '×');
   remove.type = 'button';
   remove.setAttribute('aria-label', `Remove rule “${rule.text}”`);
   remove.onclick = () => saveRules(rules.filter((r) => r.id !== rule.id));
 
-  li.append(text, chip, remove);
+  li.append(...[text, scope, chip, remove].filter(Boolean));
   return li;
 }
 
@@ -102,7 +106,7 @@ function renderRules() {
   if (editing) return;
   $('ruleList').replaceChildren(...rules.map(ruleRow));
   $('empty').hidden = rules.length > 0;
-  const wants = rules.filter((r) => r.polarity === 'want');
+  const wants = rules.filter((r) => r.polarity === 'want' && (r.scope || 'content') === 'content');
   const mode = $('mode');
   mode.hidden = wants.length === 0;
   if (wants.length) {
@@ -117,7 +121,16 @@ function showStats(s) {
   $('site').replaceChildren(el('b', '', s.site));
   $('pick').hidden = false;
   $('pickSite').checked = s.siteOn;
-  $('siteNote').hidden = s.siteOn;
+  $('siteNote').hidden = s.siteOn && !s.loginPage;
+  $('siteNote').textContent = !s.siteOn ? 'Picky leaves this site alone.' : 'Paused on this page: it has a password field, so Picky reads nothing here.';
+  // "Leave no trace" shows nothing on the page, so this is where hidden items can come back.
+  $('here').hidden = !(s.noTrace && s.hiddenHere > 0);
+  if (s.hiddenHere) {
+    const all = s.shownHere >= s.hiddenHere;
+    $('hereText').textContent = `${s.hiddenHere} hidden on this page${all ? ', showing now' : ''}`;
+    $('hereToggle').textContent = all ? 'Hide again' : 'Show them';
+    $('hereToggle').dataset.show = all ? '' : '1';
+  }
   $('hidden').textContent = s.hidden;
   $('removed').textContent = s.removed ? `${s.removed} removed` : '';
   $('clean').hidden = !s.cleanAvailable || !s.siteOn;
@@ -183,12 +196,30 @@ $('enabled').addEventListener('change', (e) => {
   chrome.storage.local.set({ enabled: e.target.checked });
 });
 $('settings').onclick = () => chrome.runtime.openOptionsPage();
+// Every site is on; the switch remembers the ones turned off.
 $('pickSite').addEventListener('change', async (e) => {
   const on = e.target.checked;
   $('siteNote').hidden = on;
   const { sites = {} } = await chrome.storage.local.get('sites');
-  await chrome.storage.local.set({ sites: { ...sites, [site]: on } });
+  const next = { ...sites };
+  if (on) delete next[site];
+  else next[site] = false;
+  await chrome.storage.local.set({ sites: next });
 });
+$('hereToggle').onclick = async () => {
+  try {
+    showStats(await chrome.tabs.sendMessage(tabId, { type: 'showHidden', show: Boolean($('hereToggle').dataset.show) }));
+  } catch {}
+};
+function setStyle(style) {
+  for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-checked', String(b.dataset.style === style));
+}
+for (const b of document.querySelectorAll('.seg button')) {
+  b.onclick = () => {
+    setStyle(b.dataset.style);
+    chrome.storage.local.set({ hiddenStyle: b.dataset.style });
+  };
+}
 $('cleanFeed').addEventListener('change', async (e) => {
   await chrome.storage.local.set({ cleanFeed: e.target.checked });
   $('cleanHint').hidden = false;
@@ -233,6 +264,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
     if (changes.enabled) setEnabled(changes.enabled.newValue !== false);
     if (changes.cleanFeed) $('cleanFeed').checked = changes.cleanFeed.newValue === true;
+    if (changes.hiddenStyle) setStyle(changes.hiddenStyle.newValue || 'card');
     if (changes.apiKey) {
       hasKey = Boolean(changes.apiKey.newValue?.trim());
       renderStatus();
@@ -249,8 +281,9 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type === 'stats' && sender.tab?.id === tabId) showStats(msg);
 });
 
-const local = await chrome.storage.local.get(['enabled', 'rules', 'apiKey', 'cleanFeed']);
+const local = await chrome.storage.local.get(['enabled', 'rules', 'apiKey', 'cleanFeed', 'hiddenStyle']);
 $('cleanFeed').checked = local.cleanFeed === true;
+setStyle(local.hiddenStyle || 'card');
 rules = local.rules || [];
 hasKey = Boolean(local.apiKey?.trim());
 const session = await chrome.storage.session.get(['status', 'usage']);

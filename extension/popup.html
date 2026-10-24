@@ -38,7 +38,7 @@
         </span>
       </label>
     </div>
-    <p class="site-note" id="siteNote" hidden>Picky leaves this site alone until you pick it.</p>
+    <p class="site-note" id="siteNote" hidden>Picky leaves this site alone.</p>
     <div class="clean" id="clean" hidden>
       <label class="clean-row">
         <span class="clean-text">
@@ -57,11 +57,20 @@
       <div class="stat" data-kind="blurred"><dt>unsure</dt><dd id="blurred">0</dd></div>
       <div class="stat" data-kind="shown"><dt>shown</dt><dd id="shown">0</dd></div>
     </dl>
+    <p class="here" id="here" hidden><span id="hereText"></span><button type="button" class="link" id="hereToggle">Show them</button></p>
     <button type="button" class="facts-link" id="openFacts">
       <span class="facts-mark">Feed Facts</span>
       <span class="facts-hint">What your feed was made of</span>
     </button>
   </section>
+
+  <div class="style-row">
+    <span class="style-label" id="styleLabel">Hidden items</span>
+    <div class="seg" role="radiogroup" aria-labelledby="styleLabel">
+      <button type="button" role="radio" data-style="card" aria-checked="true" title="Show a “Picky hid this” card where something was hidden">Show a card</button>
+      <button type="button" role="radio" data-style="none" aria-checked="false" title="Hidden items fold away with no gap">Leave no trace</button>
+    </div>
+  </div>
 
   <section class="rules">
     <h2>Your rules</h2>

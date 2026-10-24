@@ -9,7 +9,7 @@
 .picky-hidden > :not(.picky-label) { display: none !important; }
 
 .picky-label { display: none !important; }
-.picky-hidden > .picky-label { display: block !important; }
+.picky-hidden > .picky-label { display: block !important; width: 100%; flex: 1 1 100%; align-self: stretch; } /* flex parents (ad bands, cards) mustn't squeeze it */
 .picky-blurred > .picky-label {
   display: flex !important; align-items: center; justify-content: center;
   position: absolute !important; inset: 0; z-index: 10; padding: 12px;
@@ -79,3 +79,18 @@ html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(arti
    spinner (visibility keeps the marker's position, so loading resumes normally afterwards). */
 .picky-collapsed, .picky-collapsed-group { display: none !important; }
 html[data-picky-paused] ytd-continuation-item-renderer { visibility: hidden !important; }
+
+/* Table-row items (Hacker News, forums): the label lives in the row's widest cell, the cells stay in
+   the table's layout, and the rows that belong to the item (points, comments) follow its state. */
+tr.picky-hidden > td:not(.picky-label) { display: table-cell !important; }
+tr.picky-hidden > td > :not(.picky-label) { display: none !important; }
+tr.picky-hidden > td > .picky-label { display: block !important; }
+tr.picky-blurred > td:not(.picky-label) { filter: none !important; opacity: 1 !important; pointer-events: auto !important; height: 56px; }
+tr.picky-blurred > td > :not(.picky-label) { filter: blur(18px) saturate(.5); opacity: .55; pointer-events: none; user-select: none; }
+tr.picky-blurred > td > .picky-label {
+  display: flex !important; align-items: center; justify-content: center;
+  position: absolute !important; inset: 0; z-index: 10; padding: 6px 12px;
+}
+tr.picky-revealed > td > .picky-label { display: block !important; position: absolute !important; top: 50%; right: 8px; transform: translateY(-50%); z-index: 10; }
+.picky-companion-gone { display: none !important; }
+.picky-companion-faded > * { filter: blur(5px) saturate(.4); opacity: .55; }

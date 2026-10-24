@@ -4,7 +4,7 @@
   const builtIn = /(^|\.)youtube\.com$/.test(host) ? PickyAdapters.youtube
     : /(^|\.)instagram\.com$/.test(host) ? PickyAdapters.instagram : null;
   const adapter = builtIn || PickyAdapters.generic;
-  const site = builtIn?.site || host; // key for the per-site switch; YouTube and Instagram default to on
+  const site = builtIn?.site || host; // key for the per-site switch; every site is on unless switched off
   const page = Math.random().toString(36).slice(2); // this page load, for Feed Facts
   const HIDE_AT = 0.65; // "avoid" at or above, or best "want" below BLUR_AT -> hide
   const BLUR_AT = 0.35; // in between -> blur, never hide
@@ -15,8 +15,11 @@
   let hasKey = false;
   let prejudge = true; // judge from the site's feed data before items are drawn; storage `prejudge: false` turns it off
   let cleanFeed = false; // YouTube: remove certain hides from the feed data instead of hiding them on the page
+  let noTrace = false; // storage `hiddenStyle: 'none'`: hidden items fold away instead of showing a card
   let settingsLoaded = false;
-  let rules = []; // [{ id, text, polarity: 'want' | 'avoid' | null }]
+  let settled = null;
+  const settingsReady = new Promise((r) => { settled = r; });
+  let rules = []; // [{ id, text, polarity: 'want' | 'avoid' | null, scope: 'content' | 'some_ads' | 'every_ad' }]
   let blocked = null; // 'no-key' | 'bad-key': stop asking until settings change
   const tracked = new Set(); // item elements we manage
   const near = new Set(); // tracked items within the prefetch margin of the viewport
@@ -32,26 +35,50 @@
   let late = 0; // items let through by the timeout before Jev answered
   const removed = new Map(); // Clean feed: content key -> { title, channel, url, rule, p, kind, canShow }
   const cleanTimings = []; // { outcome, continuation, ms } per feed response Clean feed handled
+  const adSlots = new WeakSet(); // tracked items that are ad slots (generic sites)
+  const frameKeys = new WeakMap(); // ad slot -> content keys of the creatives its frames reported
 
   const alive = () => Boolean(chrome.runtime?.id);
-  const active = () => enabled && siteOn && rules.length > 0 && alive();
+  const watching = () => enabled && siteOn && rules.length > 0 && alive();
+  let loginPage = false; // a visible password field: nothing on this page is judged or sent
+  const active = () => watching() && !loginPage;
   const decisive = () => rules.some((r) => r.polarity === 'want' || r.polarity === 'avoid');
+  const adsOn = () => adapter === PickyAdapters.generic && active() && hasKey && !blocked;
+
+  // Rules about ads apply only to ads; a rule about every ad needs no question (an ad is an ad).
+  const isAd = (key) => key.startsWith('ad:');
+  const rulesFor = (key) => rules.filter((r) => r.scope === 'content' || isAd(key));
+  const askable = (key) => rulesFor(key).filter((r) => r.scope !== 'every_ad').map((r) => r.text);
+  function fillLocal(key) {
+    if (!isAd(key)) return;
+    const every = rules.filter((r) => r.scope === 'every_ad');
+    if (every.length) results.set(key, { ...(results.get(key) || {}), ...Object.fromEntries(every.map((r) => [r.text, 1])) });
+  }
+
+  function checkLogin() {
+    loginPage = document.body ? [...document.querySelectorAll('input[type="password"]')].some((i) => {
+      const r = i.getBoundingClientRect();
+      return r.width > 1 && r.height > 1 && getComputedStyle(i).visibility !== 'hidden';
+    }) : false;
+    return loginPage;
+  }
 
   // ---- settings ----
   function loadSettings() {
-    chrome.storage.local.get(['enabled', 'rules', 'sites', 'apiKey', 'prejudge', 'cleanFeed']).then((s) => {
-      const before = rules.map((r) => `${r.text}:${r.polarity}`).join('\n');
+    chrome.storage.local.get(['enabled', 'rules', 'sites', 'apiKey', 'prejudge', 'cleanFeed', 'hiddenStyle']).then((s) => {
+      const before = rules.map((r) => `${r.text}:${r.polarity}:${r.scope}`).join('\n');
       enabled = s.enabled !== false;
-      siteOn = s.sites?.[site] ?? Boolean(builtIn);
+      siteOn = s.sites?.[site] !== false;
       hasKey = Boolean(s.apiKey?.trim());
       prejudge = s.prejudge !== false;
       cleanFeed = s.cleanFeed === true;
-      rules = (s.rules || []).filter((r) => r.text?.trim()).map((r) => ({ ...r, text: r.text.trim() }));
+      noTrace = s.hiddenStyle === 'none';
+      rules = (s.rules || []).filter((r) => r.text?.trim()).map((r) => ({ ...r, text: r.text.trim(), scope: r.scope || 'content' }));
       blocked = null;
-      if (rules.map((r) => `${r.text}:${r.polarity}`).join('\n') !== before) redecide();
+      if (rules.map((r) => `${r.text}:${r.polarity}:${r.scope}`).join('\n') !== before) redecide();
       updatePrehide();
       sendConfig();
-      if (active()) {
+      if (watching()) {
         observe();
         scan();
       } else {
@@ -60,13 +87,14 @@
       for (const el of tracked) judge(el);
       if (!settingsLoaded) {
         settingsLoaded = true;
+        settled();
         early.splice(0).forEach(prejudgeItem);
       }
       reportStats();
     });
   }
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && (changes.enabled || changes.rules || changes.sites || changes.apiKey || changes.prejudge || changes.cleanFeed)) loadSettings();
+    if (area === 'local' && (changes.enabled || changes.rules || changes.sites || changes.apiKey || changes.prejudge || changes.cleanFeed || changes.hiddenStyle)) loadSettings();
   });
 
   // Until judged, items wait invisible with their layout kept (content.css), so the original never
@@ -95,9 +123,9 @@
   // Rules changed: keep the tallies for items whose answers we already have.
   function redecide() {
     for (const key of decisions.keys()) {
-      const probs = results.get(key) || {};
-      if (rules.every((r) => r.text in probs) && decisive()) {
-        const d = decide(probs);
+      fillLocal(key);
+      if (hasAnswers(key) && decisive()) {
+        const d = decide(results.get(key));
         decisions.set(key, { ...d, removed: decisions.get(key).removed && d.state === 'hide' });
       } else {
         decisions.delete(key);
@@ -107,7 +135,7 @@
 
   // ---- judging ----
   async function judge(el) {
-    const key = adapter.key(el) || '';
+    const key = keyOf(el);
     if (key !== el.dataset.pickyKey) { // a new item, or a recycled node now showing something else
       el.dataset.pickyKey = key;
       el.removeAttribute('data-picky-ready');
@@ -115,28 +143,42 @@
     }
     if (!active() || !key) return settle(el);
 
+    fillLocal(key);
     const have = results.get(key) || {};
-    const missing = rules.map((r) => r.text).filter((t) => !(t in have));
+    const missing = askable(key).filter((t) => !(t in have));
     if (!missing.length) return apply(el, key);
     if (blocked) return settle(el);
     if (!near.has(el)) return clear(el); // asked about when it nears the viewport; stays pre-hidden till then
     armTimeout(el, key);
 
-    const state = adapter.extract(el);
+    const state = adSlots.has(el) ? PickyAds.slotState(el) : adapter.extract(el);
     el.dataset.pickyWaiting = state ? '' : '1'; // title not rendered yet; a mutation will retry
     if (!state) return clear(el);
     if (decisive()) setClass(el, 'picky-pending');
 
     const token = {};
     tokens.set(el, token);
-    await ask(key, state, adapter.image(el), missing);
+    await ask(key, state, adSlots.has(el) ? PickyAds.image(el) : adapter.image(el), missing);
     if (tokens.get(el) !== token || el.dataset.pickyKey !== key) return; // node recycled meanwhile
-    const now = results.get(key) || {};
-    if (rules.every((r) => r.text in now)) apply(el, key);
+    if (hasAnswers(key)) apply(el, key);
     else settle(el); // Jev failed: show the original
   }
 
-  const hasAnswers = (key) => Boolean(key) && rules.length > 0 && rules.every((r) => r.text in (results.get(key) || {}));
+  const hasAnswers = (key) => Boolean(key) && rules.length > 0 && rulesFor(key).every((r) => r.text in (results.get(key) || {}));
+
+  // An ad slot's key: what its frames reported wins over what the page shows of it (the most severe
+  // creative if there are several); until then, the slot as the page sees it.
+  const SEVERITY = { show: 0, blur: 1, hide: 2 };
+  function keyOf(el) {
+    if (!adSlots.has(el)) return adapter.key(el) || '';
+    let best = null;
+    for (const k of frameKeys.get(el) || []) {
+      if (!hasAnswers(k)) continue;
+      const rank = SEVERITY[decide(results.get(k)).state];
+      if (!best || rank > best.rank) best = { k, rank };
+    }
+    return best?.k || PickyAds.slotKey(el);
+  }
 
   // One request per item and rule set at a time, whether it came from the page or the feed data.
   const asking = new Map(); // content key -> { rules: Set, promise }
@@ -183,11 +225,11 @@
   });
 
   function prejudgeItem(item) {
-    if (!prejudge || !active() || blocked) return;
+    if (!prejudge || !active() || blocked || checkLogin()) return;
     const key = typeof item?.key === 'string' && ITEM_KEY.test(item.key) ? item.key : null;
     const state = cleanState(item?.state);
     if (!key || !state || hasAnswers(key) || !takeBudget()) return;
-    const missing = rules.map((r) => r.text).filter((t) => !(t in (results.get(key) || {})));
+    const missing = askable(key).filter((t) => !(t in (results.get(key) || {})));
     ask(key, state, imageFor(key, item.image), missing).then(() => {
       for (const el of tracked) if (el.dataset.pickyKey === key) judge(el); // already on the page: apply now
     });
@@ -228,7 +270,7 @@
     if (on && !cacheLoaded) {
       cacheLoaded = true;
       try {
-        const cached = await chrome.runtime.sendMessage({ type: 'cachedProbs', rules: rules.map((r) => r.text) });
+        const cached = await chrome.runtime.sendMessage({ type: 'cachedProbs', rules: askable('yt:') });
         for (const [key, probs] of Object.entries(cached || {})) results.set(key, { ...(results.get(key) || {}), ...probs });
       } catch {}
     }
@@ -246,7 +288,7 @@
       if (!key || !state) continue;
       const f = state.feed_item;
       feedInfo.set(key, { title: f.title, channel: f.channel, short: f.kind === 'short' });
-      const missing = rules.map((r) => r.text).filter((t) => !(t in (results.get(key) || {})));
+      const missing = askable(key).filter((t) => !(t in (results.get(key) || {})));
       if (missing.length && takeBudget()) asks.push(ask(key, state, imageFor(key), missing, true));
     }
     await Promise.race([Promise.allSettled(asks), new Promise((r) => setTimeout(r, Math.max(0, deadline - performance.now())))]);
@@ -367,7 +409,48 @@
     }
   });
 
-  function decide(probs) {
+  // ---- ads in frames (frame.js): a creative's key comes up the frame chain; the answers come from the
+  // service worker's cache, so a frame can't make up its own verdict ----
+  window.addEventListener('message', (e) => {
+    const m = e.data;
+    if (m?.__picky !== 'ad-verdict' || e.source === window || typeof m.key !== 'string' || !PickyAds.KEY.test(m.key) || !adsOn()) return;
+    const frame = [...document.querySelectorAll('iframe')].find((f) => f.contentWindow === e.source);
+    if (frame) onAdVerdict(frame, m.key);
+  });
+
+  async function onAdVerdict(frame, key) {
+    const texts = askable(key);
+    if (texts.length) {
+      const cached = await chrome.runtime.sendMessage({ type: 'cachedProbs', rules: texts, keys: [key] }).catch(() => null);
+      if (!cached?.[key]) return; // not something Jev answered
+      results.set(key, { ...(results.get(key) || {}), ...cached[key] });
+    }
+    fillLocal(key);
+    if (!frame.isConnected || !adsOn()) return;
+    const slot = [...tracked].find((t) => adSlots.has(t) && t.contains(frame)) || PickyAds.slotOf(frame);
+    const keys = frameKeys.get(slot) || new Set();
+    keys.delete(key);
+    keys.add(key);
+    if (keys.size > 4) keys.delete(keys.values().next().value); // the slot's latest creatives
+    frameKeys.set(slot, keys);
+    if (tracked.has(slot)) judge(slot);
+    else addSlot(slot);
+    reportStats();
+  }
+
+  function addSlot(slot) {
+    for (const t of tracked) {
+      if (t === slot) return;
+      if (adSlots.has(t) && t.contains(slot)) return; // part of a bigger slot already
+      if (!t.contains(slot) && !slot.contains(t)) continue;
+      if (frameKeys.has(t)) frameKeys.set(slot, new Set([...(frameKeys.get(slot) || []), ...frameKeys.get(t)]));
+      untrack(t);
+    }
+    adSlots.add(slot);
+    track(slot);
+  }
+
+  function decide(probs = {}) {
     let avoid = null;
     let want = null;
     for (const rule of rules) {
@@ -400,7 +483,8 @@
       clear(el);
       return updateRow(el);
     }
-    if (collapsible && !revealed.has(key)) {
+    // Clean feed, or "Leave no trace": certain hides fold away with no card and no gap.
+    if ((collapsible || (noTrace && d.state === 'hide')) && !revealed.has(key)) {
       setClass(el, 'picky-collapsed');
       return updateRow(el);
     }
@@ -416,10 +500,21 @@
   function setClass(el, cls) {
     for (const c of STATES) if (c !== cls) el.classList.remove(c);
     el.classList.add(cls);
+    follow(el, cls);
   }
 
   function clear(el) {
     el.classList.remove(...STATES);
+    follow(el, null);
+  }
+
+  // Rows that belong to a table-row item (its points and comments line) go and blur with it.
+  function follow(el, cls) {
+    if (!adapter.companions) return;
+    for (const row of adapter.companions(el)) {
+      row.classList.toggle('picky-companion-gone', cls === 'picky-hidden' || cls === 'picky-collapsed');
+      row.classList.toggle('picky-companion-faded', cls === 'picky-blurred' || cls === 'picky-pending');
+    }
   }
 
   // ---- labels (shadow DOM so page styles can't reach them) ----
@@ -438,7 +533,8 @@
       host.addEventListener('click', (e) => e.preventDefault());
       labels.set(el, host);
     }
-    if (host.parentElement !== el) el.append(host);
+    const parent = adapter.labelParent?.(el) || el;
+    if (host.parentElement !== parent) parent.append(host);
     return host;
   }
 
@@ -460,7 +556,7 @@
     if (state === 'revealed') {
       card.innerHTML = `${MARK}${reason}<button type="button">Hide again</button>`;
     } else {
-      const title = state === 'hidden' ? 'Picky hid this' : 'Picky isn’t sure';
+      const title = state === 'hidden' ? `Picky hid this${isAd(key) ? ' ad' : ''}` : 'Picky isn’t sure';
       card.innerHTML = `${MARK}<span class="text"><span class="title">${title}</span><span class="sep" aria-hidden="true">·</span>${reason}</span><button type="button">${state === 'hidden' ? 'Show anyway' : 'Show'}</button>`;
     }
     card.querySelector('button').onclick = () => {
@@ -506,6 +602,7 @@
     @container picky (max-width: 480px) {
       .sep { display: none; }
       .text { flex-direction: column; align-items: flex-start; }
+      .line { flex-wrap: wrap; row-gap: 3px; }
     }
 
     :host([state=hidden]) .card { margin: 4px 0; min-height: 52px; }
@@ -566,26 +663,45 @@
   }
 
   function scan() {
-    if (!active()) return;
+    if (!watching()) return;
+    const wasLogin = loginPage;
+    if (checkLogin()) {
+      if (!wasLogin) { // a login form showed up: let everything be, ask nothing
+        for (const el of tracked) clear(el);
+        updatePrehide();
+        reportStats();
+      }
+      return;
+    }
+    if (wasLogin) {
+      updatePrehide();
+      for (const el of tracked) judge(el);
+    }
     if (builtIn) updateTheme();
     appearAt = addedAt ?? performance.now();
     addedAt = null;
+    const slots = adsOn() ? PickyAds.findSlots() : [];
     for (const el of adapter.findItems()) {
-      if (tracked.has(el)) continue;
-      tracked.add(el);
-      io.observe(el);
-      judge(el); // answers already cached (often from the feed data) apply before the next paint
+      if (!tracked.has(el) && !slots.some((s) => s.contains(el) || el.contains(s))) track(el);
     }
+    slots.forEach(addSlot);
     appearAt = null;
-    for (const el of tracked) {
-      if (el.isConnected) continue;
-      tracked.delete(el);
-      near.delete(el);
-      io.unobserve(el);
-    }
+    for (const el of tracked) if (!el.isConnected) untrack(el);
   }
 
-  // YouTube and Instagram: next frame (their selectors are cheap). Other sites: at most every 700 ms.
+  function track(el) {
+    tracked.add(el);
+    io.observe(el);
+    judge(el); // answers already cached (often from the feed data) apply before the next paint
+  }
+  function untrack(el) {
+    clear(el);
+    tracked.delete(el);
+    near.delete(el);
+    io.unobserve(el);
+  }
+
+  // YouTube and Instagram: next frame (their selectors are cheap). Other sites: at most every `slowMs`.
   // The timer backs up requestAnimationFrame, which doesn't run in background tabs.
   function soon(fn, slowMs) {
     let queued = false;
@@ -601,11 +717,17 @@
         requestAnimationFrame(run);
         setTimeout(run, 250);
       } else {
-        setTimeout(run, slowMs);
+        setTimeout(run, typeof slowMs === 'function' ? slowMs() : slowMs);
       }
     };
   }
-  const scanSoon = soon(scan, 700);
+  // Every site is on: where a scan is slow (huge pages), scan less often, so it stays under ~5% of the time.
+  let scanMs = 0;
+  const scanSoon = soon(() => {
+    const t = performance.now();
+    scan();
+    scanMs = performance.now() - t;
+  }, () => Math.max(700, scanMs * 20));
 
   function trackedItemOf(node) {
     if (adapter.itemOf) return adapter.itemOf(node);
@@ -620,7 +742,7 @@
   let dirtyAt = null;
   const mo = new MutationObserver((records) => {
     if (!alive()) return teardown();
-    if (!active()) return;
+    if (!watching()) return;
     const now = performance.now();
     let added = false;
     for (const r of records) {
@@ -643,14 +765,14 @@
     appearAt = dirtyAt ?? performance.now();
     dirtyAt = null;
     for (const el of dirty) {
-      if (!tracked.has(el)) continue;
-      const key = adapter.key(el) || '';
+      if (!tracked.has(el) || !active()) continue;
+      const key = keyOf(el);
       if (key !== el.dataset.pickyKey) {
         clear(el);
         judge(el);
       } else if (el.dataset.pickyWaiting === '1') {
         judge(el);
-      } else if (el.matches('.picky-hidden, .picky-blurred, .picky-revealed') && labels.get(el)?.parentElement !== el) {
+      } else if (el.matches('.picky-hidden, .picky-blurred, .picky-revealed') && !el.contains(labels.get(el) || null)) {
         apply(el, key); // the site re-rendered the item and dropped our label
       }
     }
@@ -669,22 +791,27 @@
 
   // ---- stats for the popup and the toolbar badge ----
   function stats() {
-    const f = { judged: 0, hidden: 0, blurred: 0, shown: 0, removed: 0, hiddenBy: {}, offTopicFor: {}, fitBy: {}, withPicture: 0 };
+    const f = { judged: 0, hidden: 0, blurred: 0, shown: 0, removed: 0, hiddenAds: 0, hiddenBy: {}, offTopicFor: {}, fitBy: {}, withPicture: 0 };
     const bump = (map, rule) => { map[rule.text] = (map[rule.text] || 0) + 1; };
     for (const [key, d] of decisions) {
       f.judged++;
       f[d.state === 'hide' ? 'hidden' : d.state === 'blur' ? 'blurred' : 'shown']++;
       if (d.state === 'hide') bump(d.kind === 'want' ? f.offTopicFor : f.hiddenBy, d.rule);
+      if (d.state === 'hide' && isAd(key)) f.hiddenAds++;
       if (d.removed) f.removed++;
       if (d.state === 'show' && d.kind === 'want') bump(f.fitBy, d.rule);
       if (seenWithPicture.has(key)) f.withPicture++;
     }
+    const here = hiddenHere();
     return {
       hidden: f.hidden, blurred: f.blurred, shown: f.shown, removed: f.removed, facts: f, page,
-      site, siteOn, builtIn: Boolean(builtIn), adapter: adapter.name, active: active(), blocked,
+      site, siteOn, builtIn: Boolean(builtIn), adapter: adapter.name, active: active(), blocked, loginPage,
       cleanFeed, cleanAvailable: adapter === PickyAdapters.youtube,
+      noTrace, hiddenHere: here.length, shownHere: here.filter((k) => revealed.has(k)).length,
     };
   }
+  // Items on this page that are hidden (folded away, with "Leave no trace"), by content key.
+  const hiddenHere = () => [...new Set([...tracked].filter((el) => el.isConnected && decisions.get(el.dataset.pickyKey)?.state === 'hide').map((el) => el.dataset.pickyKey))];
   let statsTimer = null;
   function reportStats() {
     clearTimeout(statsTimer);
@@ -694,6 +821,20 @@
   }
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'getStats') sendResponse(stats());
+    // An ad frame asks (through the service worker) whether to judge its creative, and against what.
+    if (msg.type === 'adGate') {
+      settingsReady.then(() => sendResponse({ ok: adsOn() && decisive(), rules: askable('ad:') }));
+      return true;
+    }
+    // The popup's "Show them" / "Hide again" for items that left no trace.
+    if (msg.type === 'showHidden') {
+      for (const key of hiddenHere()) {
+        if (msg.show) revealed.add(key);
+        else revealed.delete(key);
+        for (const el of tracked) if (el.dataset.pickyKey === key) apply(el, key);
+      }
+      sendResponse(stats());
+    }
     // A picture's answers that came after the text answers (Clean feed doesn't wait for them).
     if (msg.type === 'refined' && typeof msg.key === 'string' && msg.probs) {
       results.set(msg.key, { ...(results.get(msg.key) || {}), ...msg.probs });

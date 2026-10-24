@@ -51,8 +51,17 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.usageTotal) showUsage(changes.usageTotal.newValue);
 });
 
-const { apiKey, usageTotal } = await chrome.storage.local.get(['apiKey', 'usageTotal']);
+// ---- hidden items: a card, or no trace ----
+const styleInputs = [...document.querySelectorAll('input[name="hiddenStyle"]')];
+const showStyle = (style) => styleInputs.forEach((i) => { i.checked = i.value === (style || 'card'); });
+for (const i of styleInputs) i.onchange = () => chrome.storage.local.set({ hiddenStyle: i.value });
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.hiddenStyle) showStyle(changes.hiddenStyle.newValue);
+});
+
+const { apiKey, usageTotal, hiddenStyle } = await chrome.storage.local.get(['apiKey', 'usageTotal', 'hiddenStyle']);
 showUsage(usageTotal);
+showStyle(hiddenStyle);
 if (apiKey) {
   input.value = apiKey;
   show('', 'A key is saved.');

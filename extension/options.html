@@ -31,6 +31,12 @@
     .usage div:first-child { padding-left: 0; border-left: 0; }
     .usage dt { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
     .usage dd { margin: 0; font-family: var(--display); font-weight: 700; font-size: 24px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .choices { display: grid; gap: 8px; }
+    .choice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+    .choice:has(input:checked) { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+    .choice input { margin: 3px 0 0; accent-color: var(--ink); }
+    .choice b { display: block; font-weight: 600; }
+    .choice span span { display: block; margin-top: 2px; color: var(--muted); font-size: 13.5px; }
     @media (max-width: 520px) { .usage { grid-template-columns: repeat(2, 1fr); row-gap: 14px; } .usage div:nth-child(3) { padding-left: 0; border-left: 0; } }
   </style>
 </head>
@@ -56,6 +62,15 @@
     </section>
 
     <section>
+      <h2>Hidden items</h2>
+      <p class="hint">What Picky leaves where it hides something, on every site and for ads. Items Jev isn’t sure about are blurred either way, so you decide.</p>
+      <div class="choices" role="radiogroup" aria-label="Hidden items">
+        <label class="choice"><input type="radio" name="hiddenStyle" value="card"><span><b>Show a “Picky hid this” card</b><span>You see where something was hidden and why, and can open it.</span></span></label>
+        <label class="choice"><input type="radio" name="hiddenStyle" value="none"><span><b>Leave no trace</b><span>Hidden items fold away with no gap. Bring them back from the Picky popup.</span></span></label>
+      </div>
+    </section>
+
+    <section>
       <h2>Jev usage</h2>
       <p class="hint">Jev bills input tokens at <span id="price">$0.042</span> per million; answers are free. Counted since <span id="uSince"></span>.</p>
       <dl class="usage">
@@ -76,6 +91,8 @@
         <li>Every item in your feed is one Jev request, with all your rules asked together. If Jev isn’t sure and the item has a picture, it asks once more with the picture.</li>
         <li>A <b>Hide</b> match at 0.65 or above hides the item. With any <b>Only show</b> rule, items that match none of them are hidden.</li>
         <li>Anything between 0.35 and 0.65 is blurred instead, so you decide.</li>
+        <li>Ads count as items too. A rule about some ads, like “no gambling ads”, applies only to ads; a rule about every ad, like “no ads”, hides each ad Picky finds without asking Jev.</li>
+        <li>Picky works on every site until you switch one off in the popup. It never reads a page that shows a password field.</li>
       </ol>
     </section>
   </main>
