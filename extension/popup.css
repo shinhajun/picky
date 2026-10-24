@@ -59,6 +59,15 @@ body { width: 360px; }
 .switch-sm input:checked + span::after { transform: translateX(14px); }
 .site-note { margin: -2px 0 10px; font-size: 12.5px; color: var(--muted); }
 
+.clean { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--wash); }
+.clean-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.clean-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.clean-text b { font-size: 13px; font-weight: 600; }
+.clean-text span { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.clean-hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.stat .removed:not(:empty) { margin-left: 4px; color: var(--muted); }
+.stat .removed:not(:empty)::before { content: '· '; }
+
 .facts-link {
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%;
   margin-top: 14px; padding: 9px 12px; border: 2px solid var(--ink); border-radius: 4px; background: var(--paper);

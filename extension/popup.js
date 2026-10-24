@@ -119,6 +119,8 @@ function showStats(s) {
   $('pickSite').checked = s.siteOn;
   $('siteNote').hidden = s.siteOn;
   $('hidden').textContent = s.hidden;
+  $('removed').textContent = s.removed ? `${s.removed} removed` : '';
+  $('clean').hidden = !s.cleanAvailable || !s.siteOn;
   $('blurred').textContent = s.blurred;
   $('shown').textContent = s.shown;
 }
@@ -187,6 +189,14 @@ $('pickSite').addEventListener('change', async (e) => {
   const { sites = {} } = await chrome.storage.local.get('sites');
   await chrome.storage.local.set({ sites: { ...sites, [site]: on } });
 });
+$('cleanFeed').addEventListener('change', async (e) => {
+  await chrome.storage.local.set({ cleanFeed: e.target.checked });
+  $('cleanHint').hidden = false;
+});
+$('reloadTab').onclick = () => {
+  if (tabId) chrome.tabs.reload(tabId);
+  window.close();
+};
 $('openFacts').onclick = () => {
   chrome.tabs.create({ url: chrome.runtime.getURL(tabId ? `facts.html?tab=${tabId}` : 'facts.html') });
 };
@@ -222,6 +232,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       renderRules();
     }
     if (changes.enabled) setEnabled(changes.enabled.newValue !== false);
+    if (changes.cleanFeed) $('cleanFeed').checked = changes.cleanFeed.newValue === true;
     if (changes.apiKey) {
       hasKey = Boolean(changes.apiKey.newValue?.trim());
       renderStatus();
@@ -238,7 +249,8 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type === 'stats' && sender.tab?.id === tabId) showStats(msg);
 });
 
-const local = await chrome.storage.local.get(['enabled', 'rules', 'apiKey']);
+const local = await chrome.storage.local.get(['enabled', 'rules', 'apiKey', 'cleanFeed']);
+$('cleanFeed').checked = local.cleanFeed === true;
 rules = local.rules || [];
 hasKey = Boolean(local.apiKey?.trim());
 const session = await chrome.storage.session.get(['status', 'usage']);

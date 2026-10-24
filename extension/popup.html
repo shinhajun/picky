@@ -39,8 +39,21 @@
       </label>
     </div>
     <p class="site-note" id="siteNote" hidden>Picky leaves this site alone until you pick it.</p>
+    <div class="clean" id="clean" hidden>
+      <label class="clean-row">
+        <span class="clean-text">
+          <b>Clean feed — remove instead of hide</b>
+          <span>Videos Picky is sure about are taken out before YouTube draws them, so there are no gaps.</span>
+        </span>
+        <span class="switch switch-sm">
+          <input type="checkbox" id="cleanFeed" role="switch">
+          <span aria-hidden="true"></span>
+        </span>
+      </label>
+      <p class="clean-hint" id="cleanHint" hidden>Applies to new results. <button type="button" class="link" id="reloadTab">Reload page</button></p>
+    </div>
     <dl class="stats">
-      <div class="stat" data-kind="hidden"><dt>hidden</dt><dd id="hidden">0</dd></div>
+      <div class="stat" data-kind="hidden"><dt>hidden<span class="removed" id="removed"></span></dt><dd id="hidden">0</dd></div>
       <div class="stat" data-kind="blurred"><dt>unsure</dt><dd id="blurred">0</dd></div>
       <div class="stat" data-kind="shown"><dt>shown</dt><dd id="shown">0</dd></div>
     </dl>

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Picky",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "The internet, but picky. Filter any feed with rules you write in plain words.",
   "icons": {
     "16": "icons/16.png",
@@ -30,7 +30,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["adapters.js", "content.js"],
+      "js": ["adapters.js", "cleanui.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_start"
     },

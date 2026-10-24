@@ -71,3 +71,6 @@ html[data-picky-prehide] a:is([href*="/p/"], [href*="/reel/"]):has(img):not(arti
 }
 @keyframes picky-shimmer { from { background-position: 100% 0, 0 0; } to { background-position: 0 0, 0 0; } }
 @keyframes picky-fade-in { from { opacity: 0; } }
+
+/* Clean feed end-of-feed note host (cleanui.js); its look lives in its shadow root. */
+.picky-end-note { display: block !important; width: 100%; flex: 0 0 100%; grid-column: 1 / -1; }

@@ -14,6 +14,7 @@
   let siteOn = false;
   let hasKey = false;
   let prejudge = true; // judge from the site's feed data before items are drawn; storage `prejudge: false` turns it off
+  let cleanFeed = false; // YouTube: remove certain hides from the feed data instead of hiding them on the page
   let settingsLoaded = false;
   let rules = []; // [{ id, text, polarity: 'want' | 'avoid' | null }]
   let blocked = null; // 'no-key' | 'bad-key': stop asking until settings change
@@ -29,6 +30,8 @@
   const appeared = new WeakMap(); // item -> { t, key, pre, done }, for timings
   const timings = []; // { pre, wait } per item: decided before it appeared? ms from appearing to decided
   let late = 0; // items let through by the timeout before Jev answered
+  const removed = new Map(); // Clean feed: content key -> { title, channel, url, rule, p, kind }
+  const cleanTimings = []; // { outcome, continuation, ms } per feed response Clean feed handled
 
   const alive = () => Boolean(chrome.runtime?.id);
   const active = () => enabled && siteOn && rules.length > 0 && alive();
@@ -36,16 +39,18 @@
 
   // ---- settings ----
   function loadSettings() {
-    chrome.storage.local.get(['enabled', 'rules', 'sites', 'apiKey', 'prejudge']).then((s) => {
+    chrome.storage.local.get(['enabled', 'rules', 'sites', 'apiKey', 'prejudge', 'cleanFeed']).then((s) => {
       const before = rules.map((r) => `${r.text}:${r.polarity}`).join('\n');
       enabled = s.enabled !== false;
       siteOn = s.sites?.[site] ?? Boolean(builtIn);
       hasKey = Boolean(s.apiKey?.trim());
       prejudge = s.prejudge !== false;
+      cleanFeed = s.cleanFeed === true;
       rules = (s.rules || []).filter((r) => r.text?.trim()).map((r) => ({ ...r, text: r.text.trim() }));
       blocked = null;
       if (rules.map((r) => `${r.text}:${r.polarity}`).join('\n') !== before) redecide();
       updatePrehide();
+      sendConfig();
       if (active()) {
         observe();
         scan();
@@ -61,7 +66,7 @@
     });
   }
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && (changes.enabled || changes.rules || changes.sites || changes.apiKey || changes.prejudge)) loadSettings();
+    if (area === 'local' && (changes.enabled || changes.rules || changes.sites || changes.apiKey || changes.prejudge || changes.cleanFeed)) loadSettings();
   });
 
   // Until judged, items wait invisible with their layout kept (content.css), so the original never
@@ -91,8 +96,12 @@
   function redecide() {
     for (const key of decisions.keys()) {
       const probs = results.get(key) || {};
-      if (rules.every((r) => r.text in probs) && decisive()) decisions.set(key, decide(probs));
-      else decisions.delete(key);
+      if (rules.every((r) => r.text in probs) && decisive()) {
+        const d = decide(probs);
+        decisions.set(key, { ...d, removed: decisions.get(key).removed && d.state === 'hide' });
+      } else {
+        decisions.delete(key);
+      }
     }
   }
 
@@ -131,10 +140,10 @@
 
   // One request per item and rule set at a time, whether it came from the page or the feed data.
   const asking = new Map(); // content key -> { rules: Set, promise }
-  function ask(key, state, image, missing) {
+  function ask(key, state, image, missing, quick = false) {
     const current = asking.get(key);
     if (current && missing.every((t) => current.rules.has(t))) return current.promise;
-    const promise = chrome.runtime.sendMessage({ type: 'judge', key, state, rules: missing, image })
+    const promise = chrome.runtime.sendMessage({ type: 'judge', key, state, rules: missing, image, quick })
       .then((res) => {
         if (res?.probs) results.set(key, { ...(results.get(key) || {}), ...res.probs });
         if (res?.vision) seenWithPicture.add(key);
@@ -154,7 +163,16 @@
   // ---- items from the site's feed data (prefetch.js, in the page's world), judged before they're drawn ----
   const early = []; // arrived before settings loaded
   let prefetched = 0;
-  const PREFETCH_LIMIT = 600; // per page load: caps what a page could make Picky spend
+  // Asks that came from the page world: at most 400 per 5 minutes, so a page can't run up the bill.
+  let budgetFrom = 0;
+  let budgetUsed = 0;
+  function takeBudget() {
+    if (performance.now() - budgetFrom > 300000) [budgetFrom, budgetUsed] = [performance.now(), 0];
+    if (budgetUsed >= 400) return false;
+    budgetUsed++;
+    prefetched++;
+    return true;
+  }
   const ITEM_KEY = /^(yt:[vs]:[\w-]{11}|ig:[\w-]{5,40})$/;
   window.addEventListener('message', (e) => {
     if (!builtIn || e.source !== window || e.data?.__picky !== 'feed' || !Array.isArray(e.data.items)) return;
@@ -165,11 +183,10 @@
   });
 
   function prejudgeItem(item) {
-    if (!prejudge || !active() || blocked || prefetched >= PREFETCH_LIMIT) return;
+    if (!prejudge || !active() || blocked) return;
     const key = typeof item?.key === 'string' && ITEM_KEY.test(item.key) ? item.key : null;
     const state = cleanState(item?.state);
-    if (!key || !state || hasAnswers(key)) return;
-    prefetched++;
+    if (!key || !state || hasAnswers(key) || !takeBudget()) return;
     const missing = rules.map((r) => r.text).filter((t) => !(t in (results.get(key) || {})));
     ask(key, state, imageFor(key, item.image), missing).then(() => {
       for (const el of tracked) if (el.dataset.pickyKey === key) judge(el); // already on the page: apply now
@@ -199,6 +216,105 @@
       return null;
     }
   }
+
+  // ---- Clean feed (YouTube): prefetch.js asks which items of a feed response to take out ----
+  const cleanActive = () => adapter === PickyAdapters.youtube && cleanFeed && prejudge && active() && hasKey && !blocked && decisive();
+  const feedInfo = new Map(); // content key -> { title, channel, kind } from the feed data, for the removed list
+  let cacheLoaded = false;
+
+  // The first page can only lose items whose answers are already cached, so fetch those first.
+  async function sendConfig() {
+    const on = cleanActive();
+    if (on && !cacheLoaded) {
+      cacheLoaded = true;
+      try {
+        const cached = await chrome.runtime.sendMessage({ type: 'cachedProbs', rules: rules.map((r) => r.text) });
+        for (const [key, probs] of Object.entries(cached || {})) results.set(key, { ...(results.get(key) || {}), ...probs });
+      } catch {}
+    }
+    const hide = on ? [...results.keys()].filter((k) => k.startsWith('yt:') && hasAnswers(k) && decide(results.get(k)).state === 'hide') : [];
+    window.postMessage({ __picky: 'config', clean: cleanActive(), hide }, location.origin);
+  }
+
+  async function answerJudgeRequest({ id, items, budget }) {
+    const deadline = performance.now() + Math.max(0, Math.min(Number(budget) || 0, 700) - 40);
+    const asks = [];
+    for (const item of items.slice(0, 200)) {
+      const key = typeof item?.key === 'string' && ITEM_KEY.test(item.key) ? item.key : null;
+      const state = cleanState(item?.state);
+      if (!key || !state) continue;
+      const f = state.feed_item;
+      feedInfo.set(key, { title: f.title, channel: f.channel, short: f.kind === 'short' });
+      const missing = rules.map((r) => r.text).filter((t) => !(t in (results.get(key) || {})));
+      if (missing.length && takeBudget()) asks.push(ask(key, state, imageFor(key), missing, true));
+    }
+    await Promise.race([Promise.allSettled(asks), new Promise((r) => setTimeout(r, Math.max(0, deadline - performance.now())))]);
+    // Only certain hides leave the feed; unsure items stay and get blurred on the page as usual.
+    const remove = items.map((it) => it?.key).filter((k) => typeof k === 'string' && hasAnswers(k) && decide(results.get(k)).state === 'hide');
+    window.postMessage({ __picky: 'decisions', id, remove }, location.origin);
+  }
+
+  function noteRemoved(keys) {
+    for (const key of keys) {
+      if (typeof key !== 'string' || !ITEM_KEY.test(key) || removed.has(key) || !hasAnswers(key)) continue;
+      const d = decide(results.get(key));
+      const info = feedInfo.get(key) || {};
+      const id = key.slice(5);
+      removed.set(key, {
+        title: info.title || '', channel: info.channel || '', rule: d.rule?.text || '', p: d.p, kind: d.kind,
+        url: key.startsWith('yt:s:') ? `/shorts/${id}` : `/watch?v=${id}`,
+      });
+      decisions.set(key, { ...d, removed: true });
+    }
+    if (removed.size > 200) removed.delete(removed.keys().next().value);
+    PickyCleanUI.setRemoved([...removed.values()], document.body ? adapter.isDark() : false);
+    reportStats();
+  }
+
+  // An emptied continuation leaves YouTube's "load more" marker in view, and YouTube waits for it to
+  // re-enter the viewport before loading on. Hiding it for two frames lets YouTube see it come back.
+  let lastFeedStart = 0;
+  function nudgeContinuation() {
+    for (const el of document.querySelectorAll('ytd-continuation-item-renderer')) {
+      if (!el.getClientRects().length) continue;
+      el.style.setProperty('display', 'none', 'important');
+      requestAnimationFrame(() => requestAnimationFrame(() => el.style.removeProperty('display')));
+    }
+  }
+  function onEmptied() {
+    const at = performance.now();
+    setTimeout(() => {
+      if (lastFeedStart < at && cleanActive()) nudgeContinuation();
+    }, 900);
+  }
+
+  function showEndNote() {
+    const wants = rules.filter((r) => r.polarity === 'want').map((r) => r.text);
+    PickyCleanUI.showEndNote({
+      title: wants.length ? `Nothing that fits ${wants.join(' or ')} nearby` : 'Your rules removed everything nearby',
+      detail: 'Picky stopped loading more so it doesn’t keep fetching videos you’d never see.',
+      searchFor: wants[0] || null,
+      onMore: () => {
+        window.postMessage({ __picky: 'keep-looking' }, location.origin);
+        setTimeout(nudgeContinuation, 100);
+      },
+      dark: document.body ? adapter.isDark() : false,
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const m = e.source === window && e.data;
+    if (adapter !== PickyAdapters.youtube || !m || typeof m.__picky !== 'string') return;
+    if (m.__picky === 'judge-request' && Array.isArray(m.items) && cleanActive()) answerJudgeRequest(m);
+    else if (m.__picky === 'pruned' && Array.isArray(m.keys)) noteRemoved(m.keys.slice(0, 200));
+    else if (m.__picky === 'paused' && cleanActive()) showEndNote();
+    else if (m.__picky === 'emptied') onEmptied();
+    else if (m.__picky === 'feed-start') lastFeedStart = performance.now();
+    else if (m.__picky === 'resumed') PickyCleanUI.hideEndNote();
+    else if (m.__picky === 'clean-timing' && cleanTimings.length < 2000) {
+      cleanTimings.push({ outcome: String(m.outcome), continuation: Boolean(m.continuation), found: Number(m.found) || 0, removed: Number(m.removed) || 0, ms: Number(m.ms) || 0 });
+    }
+  });
 
   function decide(probs) {
     let avoid = null;
@@ -454,6 +570,7 @@
       addedAt ??= now;
       scanSoon();
     }
+    if (adapter === PickyAdapters.youtube) PickyCleanUI.placeEndNote(); // no-op unless a note was dropped
     if (dirty.size) {
       dirtyAt ??= now;
       flushSoon();
@@ -489,18 +606,20 @@
 
   // ---- stats for the popup and the toolbar badge ----
   function stats() {
-    const f = { judged: 0, hidden: 0, blurred: 0, shown: 0, hiddenBy: {}, offTopicFor: {}, fitBy: {}, withPicture: 0 };
+    const f = { judged: 0, hidden: 0, blurred: 0, shown: 0, removed: 0, hiddenBy: {}, offTopicFor: {}, fitBy: {}, withPicture: 0 };
     const bump = (map, rule) => { map[rule.text] = (map[rule.text] || 0) + 1; };
     for (const [key, d] of decisions) {
       f.judged++;
       f[d.state === 'hide' ? 'hidden' : d.state === 'blur' ? 'blurred' : 'shown']++;
       if (d.state === 'hide') bump(d.kind === 'want' ? f.offTopicFor : f.hiddenBy, d.rule);
+      if (d.removed) f.removed++;
       if (d.state === 'show' && d.kind === 'want') bump(f.fitBy, d.rule);
       if (seenWithPicture.has(key)) f.withPicture++;
     }
     return {
-      hidden: f.hidden, blurred: f.blurred, shown: f.shown, facts: f, page,
+      hidden: f.hidden, blurred: f.blurred, shown: f.shown, removed: f.removed, facts: f, page,
       site, siteOn, builtIn: Boolean(builtIn), adapter: adapter.name, active: active(), blocked,
+      cleanFeed, cleanAvailable: adapter === PickyAdapters.youtube,
     };
   }
   let statsTimer = null;
@@ -512,8 +631,16 @@
   }
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'getStats') sendResponse(stats());
+    // A picture's answers that came after the text answers (Clean feed doesn't wait for them).
+    if (msg.type === 'refined' && typeof msg.key === 'string' && msg.probs) {
+      results.set(msg.key, { ...(results.get(msg.key) || {}), ...msg.probs });
+      seenWithPicture.add(msg.key);
+      for (const el of tracked) if (el.dataset.pickyKey === msg.key) judge(el);
+    }
     // How early items were judged (scripts/e2e.js): decided before they appeared, and ms to decide.
-    if (msg.type === 'getTimings') sendResponse({ timings, late, prefetched, prehide: document.documentElement.hasAttribute('data-picky-prehide') });
+    if (msg.type === 'getTimings') {
+      sendResponse({ timings, late, prefetched, prehide: document.documentElement.hasAttribute('data-picky-prehide'), cleanTimings, removed: [...removed.keys()] });
+    }
   });
 
   loadSettings();

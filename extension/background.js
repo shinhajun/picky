@@ -106,7 +106,7 @@ function noteImage(ok, ms) {
 // ---- judge one feed item against every rule in a single Jev request ----
 // rules: rule texts. Answers are keyed by rule text; polarity is applied by the content script.
 const inflight = new Map();
-async function judge({ key, state, rules, image }, tabId) {
+async function judge({ key, state, rules, image, quick }, tabId) {
   await cacheReady;
   const probs = {};
   const missing = [];
@@ -128,7 +128,7 @@ async function judge({ key, state, rules, image }, tabId) {
   if (request) {
     countUsage({ saved: 1 }, tabId); // same item already being asked about
   } else {
-    request = limited(() => askItem(apiKey, state, missing, image, tabId)).finally(() => inflight.delete(flightKey));
+    request = limited(() => askItem(apiKey, state, missing, image, tabId, quick && { key, tabId })).finally(() => inflight.delete(flightKey));
     inflight.set(flightKey, request);
   }
   try {
@@ -161,7 +161,9 @@ function isShort(state) {
 
 // Text first. Only unsure answers (or every answer, when there is barely any text) are asked again
 // with the picture; if anything about the image fails, the text answers stand.
-async function askItem(apiKey, state, texts, image, tabId) {
+// `quick` (Clean feed, where YouTube is waiting): return the text answers at once and send the picture's
+// answers to the tab as a 'refined' message when they arrive.
+async function askItem(apiKey, state, texts, image, tabId, quick) {
   const t = performance.now();
   const first = await callJev(apiKey, { state, questions: questionsFor(texts) });
   countCall(first, tabId);
@@ -170,18 +172,31 @@ async function askItem(apiKey, state, texts, image, tabId) {
   if (!image) return { answers };
   const again = isShort(state) ? texts : texts.filter((x) => answers[x] >= UNSURE_FROM && answers[x] < UNSURE_TO);
   if (!again.length) return { answers };
-  const t2 = performance.now();
+  const withPicture = askWithPicture(apiKey, state, again, image, tabId);
+  if (!quick) {
+    const better = await withPicture;
+    return better ? { answers: { ...answers, ...better }, vision: true } : { answers };
+  }
+  withPicture.then((better) => {
+    if (!better) return;
+    for (const [text, v] of Object.entries(better)) remember(`${quick.key}|${ruleKey(text)}`, v);
+    chrome.tabs.sendMessage(quick.tabId, { type: 'refined', key: quick.key, probs: better }).catch(() => {});
+  });
+  return { answers };
+}
+
+async function askWithPicture(apiKey, state, texts, image, tabId) {
+  const t = performance.now();
   try {
     const { ref, asset } = await imageAsset(image);
     const withPicture = { ...state, feed_item: { ...state.feed_item, picture: ref } };
-    const res = await callJev(apiKey, { state: withPicture, questions: questionsFor(again), assets: { [ref]: asset } }, { retries: 2 });
+    const res = await callJev(apiKey, { state: withPicture, questions: questionsFor(texts), assets: { [ref]: asset } }, { retries: 2 });
     countCall(res, tabId);
-    answersFor(res, again, answers);
-    noteImage(true, performance.now() - t2);
-    return { answers, vision: true };
+    noteImage(true, performance.now() - t);
+    return answersFor(res, texts);
   } catch {
     noteImage(false);
-    return { answers };
+    return null;
   }
 }
 
@@ -257,6 +272,21 @@ async function recordFacts(tabId, msg) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'judge') {
     judge(msg, sender.tab?.id).then(sendResponse);
+    return true;
+  }
+  // Clean feed on a new page: every cached answer for these rules, keyed by content key.
+  if (msg.type === 'cachedProbs') {
+    cacheReady.then(() => {
+      const byRuleKey = new Map((msg.rules || []).map((text) => [ruleKey(text), text]));
+      const out = {};
+      for (const [k, v] of cache) {
+        const cut = k.lastIndexOf('|');
+        const text = byRuleKey.get(k.slice(cut + 1));
+        if (text !== undefined) (out[k.slice(0, cut)] ??= {})[text] = v;
+      }
+      for (const key in out) if (Object.keys(out[key]).length < byRuleKey.size) delete out[key];
+      sendResponse(out);
+    });
     return true;
   }
   // Calls made from extension pages (the API key test in the popup and options page).
